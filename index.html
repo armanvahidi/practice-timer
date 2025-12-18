@@ -1,6 +1,7 @@
 <!doctype html>
 <html lang="en">
 <head>
+
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Practice Timer</title>
@@ -32,8 +33,12 @@
 
   <a href="#history" id="historyLink">History</a>
   <div id="history" style="display:none;"></div>
-
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script>
+  const supabaseUrl = "https://pkzwwhaqnpxmzqwzcitl.supabase.co";
+const supabaseAnonKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBrend3aGFxbnB4bXpxd3pjaXRsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjYwNzAzNjEsImV4cCI6MjA4MTY0NjM2MX0.ghQHmaQz9_VHeQPahhaNqJMrc7yr8a4g88NuOqA_E7Y";
+const sb = supabase.createClient(supabaseUrl, supabaseAnonKey);
+
   // ---------- tiny storage helpers ----------
   const load = (k, fallback) => JSON.parse(localStorage.getItem(k) || JSON.stringify(fallback));
   const save = (k, v) => localStorage.setItem(k, JSON.stringify(v));
@@ -225,3 +230,4 @@
 </script>
 </body>
 </html>
+
