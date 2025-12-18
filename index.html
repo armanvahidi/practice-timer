@@ -1,7 +1,6 @@
 <!doctype html>
 <html lang="en">
 <head>
-
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Practice Timer</title>
@@ -18,10 +17,32 @@
     button { padding: 10px 12px; border-radius: 10px; border: 1px solid #ccc; background: #fff; }
     input { padding: 10px 12px; border-radius: 10px; border: 1px solid #ccc; width: 100%; }
     a { display:inline-block; margin-top: 12px; }
+    #authBox { margin: 12px 0; padding: 12px; border: 1px solid #ddd; border-radius: 10px; display:none; }
+    #authRow { display:flex; gap:8px; margin-top: 8px; }
+    #status { margin: 10px 0; opacity: 0.85; }
   </style>
 </head>
 <body>
   <h1>Piano Practice</h1>
+
+  <div id="status"></div>
+
+  <div id="authBox">
+    <div>
+      <input id="email" placeholder="Email for login" />
+    </div>
+    <div id="authRow">
+      <button id="sendCodeBtn">Send code</button>
+    </div>
+    <div style="margin-top:8px;">
+      <input id="otp" placeholder="Enter code from email" />
+    </div>
+    <div id="authRow">
+      <button id="verifyBtn">Verify</button>
+      <button id="signOutBtn">Sign out</button>
+    </div>
+  </div>
+
   <div class="total" id="todayTotal">Today: 00:00:00</div>
 
   <div class="controls">
@@ -33,307 +54,407 @@
 
   <a href="#history" id="historyLink">History</a>
   <div id="history" style="display:none;"></div>
+
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-<script>
-  const supabaseUrl = "https://pkzwwhaqnpxmzqwzcitl.supabase.co";
-const supabaseAnonKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBrend3aGFxbnB4bXpxd3pjaXRsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjYwNzAzNjEsImV4cCI6MjA4MTY0NjM2MX0.ghQHmaQz9_VHeQPahhaNqJMrc7yr8a4g88NuOqA_E7Y";
-const sb = supabase.createClient(supabaseUrl, supabaseAnonKey);
+  <script>
+    // -----------------------------
+    // 1) SUPABASE CONFIG
+    // -----------------------------
+    const supabaseUrl = "PASTE_YOUR_PROJECT_URL_HERE";
+    const supabaseAnonKey = "PASTE_YOUR_ANON_PUBLIC_KEY_HERE";
+    const sb = supabase.createClient(supabaseUrl, supabaseAnonKey);
 
-  // ---------- tiny storage helpers ----------
-  <div id="authBox" style="margin:12px 0; display:none;">
-  <input id="email" placeholder="Email for login" />
-  <input id="otp" placeholder="Code (after you receive it)" />
-  <button id="sendCodeBtn">Send code</button>
-  <button id="verifyBtn">Verify</button>
-</div>
+    // -----------------------------
+    // 2) SMALL HELPERS
+    // -----------------------------
+    const statusEl = document.getElementById("status");
+    const setStatus = (msg) => { statusEl.textContent = msg || ""; };
 
-  //----- added ----//
-async function requireLogin() {
-  const { data: { session } } = await sb.auth.getSession();
-  if (session) return session;
+    const todayKey = () => new Date().toISOString().slice(0,10); // YYYY-MM-DD
+    const pad = n => String(n).padStart(2,'0');
+    const fmt = secs => {
+      secs = Math.max(0, Math.floor(secs));
+      const h = Math.floor(secs/3600);
+      const m = Math.floor((secs%3600)/60);
+      const s = secs%60;
+      return `${pad(h)}:${pad(m)}:${pad(s)}`;
+    };
 
-  document.getElementById("authBox").style.display = "block";
-
-  document.getElementById("sendCodeBtn").onclick = async () => {
-    const email = document.getElementById("email").value.trim();
-    if (!email) return alert("Enter your email");
-    const { error } = await sb.auth.signInWithOtp({ email });
-    if (error) return alert(error.message);
-    alert("Code sent. Check your email.");
-  };
-
-  document.getElementById("verifyBtn").onclick = async () => {
-    const email = document.getElementById("email").value.trim();
-    const token = document.getElementById("otp").value.trim();
-    const { error } = await sb.auth.verifyOtp({ email, token, type: "email" });
-    if (error) return alert(error.message);
-    location.reload();
-  };
-
-  return null;
-}
-
-
-
-  //-------//
-
-
-//---------added2------//
-async function loadFromCloud() {
-  const { data: itemsData, error: itemsErr } = await sb
-    .from("practice_items")
-    .select("*")
-    .order("created_at", { ascending: true });
-
-  if (itemsErr) throw itemsErr;
-
-  const { data: sessionsData, error: sessionsErr } = await sb
-    .from("practice_sessions")
-    .select("*");
-
-  if (sessionsErr) throw sessionsErr;
-
-  items = itemsData.map(r => ({
-    id: r.id,
-    name: r.name,
-    archived: r.archived,
-    createdAt: new Date(r.created_at).getTime()
-  }));
-
-  sessions = sessionsData.map(r => ({
-    id: r.id,
-    itemId: r.item_id,
-    startTs: new Date(r.start_time).getTime(),
-    endTs: new Date(r.end_time).getTime(),
-    durationSec: r.duration_seconds,
-    dateKey: String(r.date_key)
-  }));
-
-  runningId = null; // we’ll keep “running” only in-memory for now
-}
-
-
-  ///-------//
-
-  await sb.from("practice_items").insert({ name, archived: false });
-
-
-    ///-------//
-
-await sb.from("practice_sessions").insert({
-  item_id: s.itemId,
-  start_time: new Date(s.startTs).toISOString(),
-  end_time: new Date(s.endTs).toISOString(),
-  duration_seconds: s.durationSec,
-  date_key: s.dateKey
-});
-
-
-
-
-
-    ///-------//
-
-(async () => {
-  const session = await requireLogin();
-  if (!session) return;
-  document.getElementById("authBox").style.display = "none";
-  await loadFromCloud();
-  render();
-})();
-
-
-
-    ///-------//
-  const load = (k, fallback) => JSON.parse(localStorage.getItem(k) || JSON.stringify(fallback));
-  const save = (k, v) => localStorage.setItem(k, JSON.stringify(v));
-
-  const todayKey = () => new Date().toISOString().slice(0,10); // YYYY-MM-DD
-  const pad = n => String(n).padStart(2,'0');
-  const fmt = secs => {
-    secs = Math.max(0, Math.floor(secs));
-    const h = Math.floor(secs/3600);
-    const m = Math.floor((secs%3600)/60);
-    const s = secs%60;
-    return `${pad(h)}:${pad(m)}:${pad(s)}`;
-  };
-
-  // ---------- state ----------
-  let items = load("items", []);
-  let sessions = load("sessions", []);
-  let runningId = load("runningId", null);
-
-  // ---------- core logic ----------
-  function startSession(itemId) {
-    const now = Date.now();
-    const id = crypto.randomUUID();
-    sessions.push({
-      id, itemId,
-      startTs: now,
-      endTs: null,
-      durationSec: null,
-      dateKey: todayKey(),
-    });
-    runningId = id;
-    persist();
-  }
-
-  function stopSession(sessionId) {
-    const s = sessions.find(x => x.id === sessionId);
-    if (!s || s.endTs) return;
-    const now = Date.now();
-    s.endTs = now;
-    s.durationSec = Math.max(0, Math.floor((s.endTs - s.startTs)/1000));
-    runningId = null;
-    persist();
-  }
-
-  function persist() {
-    save("items", items);
-    save("sessions", sessions);
-    save("runningId", runningId);
-    render();
-  }
-
-  function ensureNotCrossDay() {
-    // simplest behaviour: attribute running session to the day it started
-    // if you want midnight-splitting later, we can add it.
-  }
-
-  function totalsForDate(dateKey) {
-    const daySessions = sessions.filter(s => s.dateKey === dateKey);
-    const byItem = new Map();
-    let total = 0;
-
-    for (const s of daySessions) {
-      const dur = s.durationSec ?? (s.id === runningId ? Math.floor((Date.now()-s.startTs)/1000) : 0);
-      total += dur;
-      byItem.set(s.itemId, (byItem.get(s.itemId) || 0) + dur);
-    }
-    return { total, byItem };
-  }
-
-  // ---------- UI ----------
-  function renderHome() {
-    const date = todayKey();
-    const { total, byItem } = totalsForDate(date);
-    document.getElementById("todayTotal").textContent = `Today: ${fmt(total)}`;
-
-    const wrap = document.getElementById("items");
-    wrap.innerHTML = "";
-
-    for (const it of items.filter(x => !x.archived)) {
-      const row = document.createElement("div");
-      row.className = "row";
-
-      const running = runningId && sessions.find(s => s.id === runningId)?.itemId === it.id;
-      if (running) row.classList.add("running");
-
-      const left = document.createElement("div");
-      left.className = "name";
-      left.textContent = it.name;
-
-      const right = document.createElement("div");
-      right.className = "time";
-      right.textContent = fmt(byItem.get(it.id) || 0);
-
-      row.appendChild(left);
-      row.appendChild(right);
-
-      row.onclick = () => {
-        // switch/stop/start logic
-        if (!runningId) {
-          startSession(it.id);
-          return;
-        }
-        const rs = sessions.find(s => s.id === runningId);
-        if (!rs) { runningId = null; persist(); return; }
-
-        if (rs.itemId === it.id) {
-          stopSession(runningId);
-        } else {
-          stopSession(runningId);
-          startSession(it.id);
-        }
-      };
-
-      wrap.appendChild(row);
-    }
-  }
-
-  function renderHistory() {
-    const hist = document.getElementById("history");
-    hist.innerHTML = "<h2>History</h2>";
-
-    // build list of dates present
-    const dates = Array.from(new Set(sessions.map(s => s.dateKey))).sort().reverse();
-    if (dates.length === 0) {
-      hist.innerHTML += "<p>No sessions yet.</p>";
-      return;
+    function parseDateKey(d) {
+      // Supabase returns date as "YYYY-MM-DD"
+      return String(d);
     }
 
-    for (const d of dates) {
-      const { total, byItem } = totalsForDate(d);
+    // -----------------------------
+    // 3) IN-MEMORY STATE (NO LOCALSTORAGE)
+    // -----------------------------
+    let currentUserId = null;
 
-      const div = document.createElement("div");
-      div.className = "row";
+    let items = [];      // { id, name, archived, createdAt }
+    let sessions = [];   // { id, itemId, startTs, endTs, durationSec, dateKey }
 
-      const left = document.createElement("div");
-      left.className = "name";
-      left.textContent = d;
+    // Only the currently-running timer is local/in-memory
+    let running = null;  // { itemId, startTs } or null
 
-      const right = document.createElement("div");
-      right.className = "time";
-      right.textContent = fmt(total);
+    // -----------------------------
+    // 4) AUTH UI + LOGIN FLOW
+    // -----------------------------
+    const authBox = document.getElementById("authBox");
+    const emailInput = document.getElementById("email");
+    const otpInput = document.getElementById("otp");
+    const sendCodeBtn = document.getElementById("sendCodeBtn");
+    const verifyBtn = document.getElementById("verifyBtn");
+    const signOutBtn = document.getElementById("signOutBtn");
 
-      div.appendChild(left);
-      div.appendChild(right);
-
-      div.onclick = () => {
-        // simple breakdown alert (replace later with a proper screen)
-        const lines = [];
-        for (const it of items) {
-          const t = byItem.get(it.id);
-          if (t) lines.push(`${it.name}: ${fmt(t)}`);
-        }
-        alert(`${d}\n\nTotal: ${fmt(total)}\n\n` + lines.join("\n"));
-      };
-
-      hist.appendChild(div);
+    function showAuthBox(show) {
+      authBox.style.display = show ? "block" : "none";
     }
-  }
 
-  function render() {
-    ensureNotCrossDay();
-    const isHistory = location.hash === "#history";
-    document.getElementById("history").style.display = isHistory ? "block" : "none";
-    document.getElementById("items").style.display = isHistory ? "none" : "block";
-    document.getElementById("todayTotal").style.display = isHistory ? "none" : "block";
-    document.getElementById("historyLink").textContent = isHistory ? "Back" : "History";
-    document.getElementById("historyLink").href = isHistory ? "#" : "#history";
+    sendCodeBtn.onclick = async () => {
+      try {
+        const email = emailInput.value.trim();
+        if (!email) return alert("Enter your email.");
+        setStatus("Sending code...");
+        const { error } = await sb.auth.signInWithOtp({ email });
+        if (error) return alert(error.message);
+        setStatus("Code sent. Check your email.");
+      } catch (e) {
+        alert(e?.message || String(e));
+      }
+    };
 
-    if (isHistory) renderHistory();
-    else renderHome();
-  }
+    verifyBtn.onclick = async () => {
+      try {
+        const email = emailInput.value.trim();
+        const token = otpInput.value.trim();
+        if (!email || !token) return alert("Enter email and code.");
+        setStatus("Verifying...");
+        const { error } = await sb.auth.verifyOtp({ email, token, type: "email" });
+        if (error) return alert(error.message);
+        setStatus("Logged in.");
+        await bootstrapAfterLogin();
+      } catch (e) {
+        alert(e?.message || String(e));
+      }
+    };
 
-  // add item
-  document.getElementById("addBtn").onclick = () => {
-    const input = document.getElementById("newItemName");
-    const name = input.value.trim();
-    if (!name) return;
-    items.push({ id: crypto.randomUUID(), name, createdAt: Date.now(), archived: false });
-    input.value = "";
-    persist();
-  };
+    signOutBtn.onclick = async () => {
+      await sb.auth.signOut();
+      currentUserId = null;
+      items = [];
+      sessions = [];
+      running = null;
+      setStatus("Signed out.");
+      showAuthBox(true);
+      render();
+    };
 
-  window.addEventListener("hashchange", render);
+    async function getSessionUserId() {
+      const { data: { session } } = await sb.auth.getSession();
+      return session?.user?.id || null;
+    }
 
-  // tick to update running timer display
-  setInterval(() => { if (runningId) render(); }, 1000);
+    // -----------------------------
+    // 5) CLOUD LOAD/SAVE
+    // -----------------------------
+    async function loadFromCloud() {
+      if (!currentUserId) return;
 
-  render();
-</script>
+      setStatus("Loading from cloud...");
+
+      // Load items
+      const { data: itemsData, error: itemsErr } = await sb
+        .from("practice_items")
+        .select("*")
+        .order("created_at", { ascending: true });
+
+      if (itemsErr) throw itemsErr;
+
+      items = (itemsData || []).map(r => ({
+        id: r.id,
+        name: r.name,
+        archived: r.archived,
+        createdAt: new Date(r.created_at).getTime()
+      }));
+
+      // Load sessions
+      const { data: sessionsData, error: sessionsErr } = await sb
+        .from("practice_sessions")
+        .select("*");
+
+      if (sessionsErr) throw sessionsErr;
+
+      sessions = (sessionsData || []).map(r => ({
+        id: r.id,
+        itemId: r.item_id,
+        startTs: new Date(r.start_time).getTime(),
+        endTs: new Date(r.end_time).getTime(),
+        durationSec: r.duration_seconds,
+        dateKey: parseDateKey(r.date_key)
+      }));
+
+      setStatus("");
+    }
+
+    async function addItemToCloud(name) {
+      const { data, error } = await sb
+        .from("practice_items")
+        .insert({ user_id: currentUserId, name, archived: false })
+        .select()
+        .single();
+
+      if (error) throw error;
+
+      items.push({
+        id: data.id,
+        name: data.name,
+        archived: data.archived,
+        createdAt: new Date(data.created_at).getTime()
+      });
+    }
+
+    async function saveSessionToCloud(itemId, startTs, endTs, durationSec, dateKey) {
+      const { data, error } = await sb
+        .from("practice_sessions")
+        .insert({
+          user_id: currentUserId,
+          item_id: itemId,
+          start_time: new Date(startTs).toISOString(),
+          end_time: new Date(endTs).toISOString(),
+          duration_seconds: durationSec,
+          date_key: dateKey
+        })
+        .select()
+        .single();
+
+      if (error) throw error;
+
+      sessions.push({
+        id: data.id,
+        itemId: data.item_id,
+        startTs: new Date(data.start_time).getTime(),
+        endTs: new Date(data.end_time).getTime(),
+        durationSec: data.duration_seconds,
+        dateKey: parseDateKey(data.date_key)
+      });
+    }
+
+    // -----------------------------
+    // 6) TOTALS + UI RENDERING
+    // -----------------------------
+    function totalsForDate(dateKey) {
+      const daySessions = sessions.filter(s => s.dateKey === dateKey);
+      const byItem = new Map();
+      let total = 0;
+
+      for (const s of daySessions) {
+        total += (s.durationSec || 0);
+        byItem.set(s.itemId, (byItem.get(s.itemId) || 0) + (s.durationSec || 0));
+      }
+
+      // Add running time for today
+      if (running && dateKey === todayKey()) {
+        const runningSecs = Math.floor((Date.now() - running.startTs) / 1000);
+        total += runningSecs;
+        byItem.set(running.itemId, (byItem.get(running.itemId) || 0) + runningSecs);
+      }
+
+      return { total, byItem };
+    }
+
+    function renderHome() {
+      const date = todayKey();
+      const { total, byItem } = totalsForDate(date);
+      document.getElementById("todayTotal").textContent = `Today: ${fmt(total)}`;
+
+      const wrap = document.getElementById("items");
+      wrap.innerHTML = "";
+
+      for (const it of items.filter(x => !x.archived)) {
+        const row = document.createElement("div");
+        row.className = "row";
+
+        const isRunning = running && running.itemId === it.id;
+        if (isRunning) row.classList.add("running");
+
+        const left = document.createElement("div");
+        left.className = "name";
+        left.textContent = it.name;
+
+        const right = document.createElement("div");
+        right.className = "time";
+        right.textContent = fmt(byItem.get(it.id) || 0);
+
+        row.appendChild(left);
+        row.appendChild(right);
+
+        row.onclick = async () => {
+          if (!currentUserId) return alert("Please log in first.");
+
+          // If nothing running, start this item
+          if (!running) {
+            running = { itemId: it.id, startTs: Date.now() };
+            render();
+            return;
+          }
+
+          // If same item running, stop and save session
+          if (running.itemId === it.id) {
+            const startTs = running.startTs;
+            const endTs = Date.now();
+            const durationSec = Math.max(0, Math.floor((endTs - startTs) / 1000));
+            const dKey = todayKey();
+
+            running = null;
+            render();
+
+            try {
+              setStatus("Saving session...");
+              await saveSessionToCloud(it.id, startTs, endTs, durationSec, dKey);
+              setStatus("");
+              render();
+            } catch (e) {
+              setStatus("");
+              alert(e?.message || String(e));
+            }
+            return;
+          }
+
+          // If different item running: stop current, save, start new
+          const prev = running;
+          const prevStartTs = prev.startTs;
+          const prevEndTs = Date.now();
+          const prevDur = Math.max(0, Math.floor((prevEndTs - prevStartTs) / 1000));
+          const prevDateKey = todayKey();
+
+          running = { itemId: it.id, startTs: Date.now() };
+          render();
+
+          try {
+            setStatus("Saving session...");
+            await saveSessionToCloud(prev.itemId, prevStartTs, prevEndTs, prevDur, prevDateKey);
+            setStatus("");
+            render();
+          } catch (e) {
+            setStatus("");
+            alert(e?.message || String(e));
+          }
+        };
+
+        wrap.appendChild(row);
+      }
+    }
+
+    function renderHistory() {
+      const hist = document.getElementById("history");
+      hist.innerHTML = "<h2>History</h2>";
+
+      const dates = Array.from(new Set(sessions.map(s => s.dateKey))).sort().reverse();
+      if (dates.length === 0) {
+        hist.innerHTML += "<p>No sessions yet.</p>";
+        return;
+      }
+
+      for (const d of dates) {
+        const { total, byItem } = totalsForDate(d);
+
+        const div = document.createElement("div");
+        div.className = "row";
+
+        const left = document.createElement("div");
+        left.className = "name";
+        left.textContent = d;
+
+        const right = document.createElement("div");
+        right.className = "time";
+        right.textContent = fmt(total);
+
+        div.appendChild(left);
+        div.appendChild(right);
+
+        div.onclick = () => {
+          const lines = [];
+          for (const it of items) {
+            const t = byItem.get(it.id);
+            if (t) lines.push(`${it.name}: ${fmt(t)}`);
+          }
+          alert(`${d}\n\nTotal: ${fmt(total)}\n\n` + lines.join("\n"));
+        };
+
+        hist.appendChild(div);
+      }
+    }
+
+    function render() {
+      const isHistory = location.hash === "#history";
+
+      document.getElementById("history").style.display = isHistory ? "block" : "none";
+      document.getElementById("items").style.display = isHistory ? "none" : "block";
+      document.getElementById("todayTotal").style.display = isHistory ? "none" : "block";
+
+      const link = document.getElementById("historyLink");
+      link.textContent = isHistory ? "Back" : "History";
+      link.href = isHistory ? "#" : "#history";
+
+      if (isHistory) renderHistory();
+      else renderHome();
+    }
+
+    // -----------------------------
+    // 7) ADD ITEM BUTTON (CLOUD)
+    // -----------------------------
+    document.getElementById("addBtn").onclick = async () => {
+      try {
+        if (!currentUserId) return alert("Please log in first.");
+        const input = document.getElementById("newItemName");
+        const name = input.value.trim();
+        if (!name) return;
+
+        setStatus("Saving item...");
+        await addItemToCloud(name);
+        setStatus("");
+
+        input.value = "";
+        render();
+      } catch (e) {
+        setStatus("");
+        alert(e?.message || String(e));
+      }
+    };
+
+    // -----------------------------
+    // 8) STARTUP / BOOTSTRAP
+    // -----------------------------
+    window.addEventListener("hashchange", render);
+
+    setInterval(() => {
+      // Update running timer display
+      if (running) render();
+    }, 1000);
+
+    async function bootstrapAfterLogin() {
+      currentUserId = await getSessionUserId();
+      if (!currentUserId) {
+        showAuthBox(true);
+        return;
+      }
+      showAuthBox(false);
+      await loadFromCloud();
+      render();
+    }
+
+    (async () => {
+      currentUserId = await getSessionUserId();
+      if (!currentUserId) {
+        showAuthBox(true);
+        setStatus("Please log in.");
+        render();
+        return;
+      }
+      showAuthBox(false);
+      await loadFromCloud();
+      render();
+    })();
+  </script>
 </body>
 </html>
-
-
