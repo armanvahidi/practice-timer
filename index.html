@@ -1,0 +1,227 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Practice Timer</title>
+  <style>
+    body { font-family: -apple-system, system-ui, Arial; margin: 16px; }
+    h1 { margin: 0 0 8px 0; font-size: 22px; }
+    .total { font-size: 28px; margin: 8px 0 16px 0; }
+    .row { display: flex; justify-content: space-between; align-items: center;
+           padding: 12px 10px; border: 1px solid #ddd; border-radius: 10px; margin-bottom: 10px; }
+    .name { font-size: 18px; }
+    .time { font-variant-numeric: tabular-nums; opacity: 0.8; }
+    .running { border-color: #000; }
+    .controls { display:flex; gap:8px; margin: 12px 0; }
+    button { padding: 10px 12px; border-radius: 10px; border: 1px solid #ccc; background: #fff; }
+    input { padding: 10px 12px; border-radius: 10px; border: 1px solid #ccc; width: 100%; }
+    a { display:inline-block; margin-top: 12px; }
+  </style>
+</head>
+<body>
+  <h1>Piano Practice</h1>
+  <div class="total" id="todayTotal">Today: 00:00:00</div>
+
+  <div class="controls">
+    <input id="newItemName" placeholder="Add item (e.g., Arpeggios)" />
+    <button id="addBtn">Add</button>
+  </div>
+
+  <div id="items"></div>
+
+  <a href="#history" id="historyLink">History</a>
+  <div id="history" style="display:none;"></div>
+
+<script>
+  // ---------- tiny storage helpers ----------
+  const load = (k, fallback) => JSON.parse(localStorage.getItem(k) || JSON.stringify(fallback));
+  const save = (k, v) => localStorage.setItem(k, JSON.stringify(v));
+
+  const todayKey = () => new Date().toISOString().slice(0,10); // YYYY-MM-DD
+  const pad = n => String(n).padStart(2,'0');
+  const fmt = secs => {
+    secs = Math.max(0, Math.floor(secs));
+    const h = Math.floor(secs/3600);
+    const m = Math.floor((secs%3600)/60);
+    const s = secs%60;
+    return `${pad(h)}:${pad(m)}:${pad(s)}`;
+  };
+
+  // ---------- state ----------
+  let items = load("items", []);
+  let sessions = load("sessions", []);
+  let runningId = load("runningId", null);
+
+  // ---------- core logic ----------
+  function startSession(itemId) {
+    const now = Date.now();
+    const id = crypto.randomUUID();
+    sessions.push({
+      id, itemId,
+      startTs: now,
+      endTs: null,
+      durationSec: null,
+      dateKey: todayKey(),
+    });
+    runningId = id;
+    persist();
+  }
+
+  function stopSession(sessionId) {
+    const s = sessions.find(x => x.id === sessionId);
+    if (!s || s.endTs) return;
+    const now = Date.now();
+    s.endTs = now;
+    s.durationSec = Math.max(0, Math.floor((s.endTs - s.startTs)/1000));
+    runningId = null;
+    persist();
+  }
+
+  function persist() {
+    save("items", items);
+    save("sessions", sessions);
+    save("runningId", runningId);
+    render();
+  }
+
+  function ensureNotCrossDay() {
+    // simplest behaviour: attribute running session to the day it started
+    // if you want midnight-splitting later, we can add it.
+  }
+
+  function totalsForDate(dateKey) {
+    const daySessions = sessions.filter(s => s.dateKey === dateKey);
+    const byItem = new Map();
+    let total = 0;
+
+    for (const s of daySessions) {
+      const dur = s.durationSec ?? (s.id === runningId ? Math.floor((Date.now()-s.startTs)/1000) : 0);
+      total += dur;
+      byItem.set(s.itemId, (byItem.get(s.itemId) || 0) + dur);
+    }
+    return { total, byItem };
+  }
+
+  // ---------- UI ----------
+  function renderHome() {
+    const date = todayKey();
+    const { total, byItem } = totalsForDate(date);
+    document.getElementById("todayTotal").textContent = `Today: ${fmt(total)}`;
+
+    const wrap = document.getElementById("items");
+    wrap.innerHTML = "";
+
+    for (const it of items.filter(x => !x.archived)) {
+      const row = document.createElement("div");
+      row.className = "row";
+
+      const running = runningId && sessions.find(s => s.id === runningId)?.itemId === it.id;
+      if (running) row.classList.add("running");
+
+      const left = document.createElement("div");
+      left.className = "name";
+      left.textContent = it.name;
+
+      const right = document.createElement("div");
+      right.className = "time";
+      right.textContent = fmt(byItem.get(it.id) || 0);
+
+      row.appendChild(left);
+      row.appendChild(right);
+
+      row.onclick = () => {
+        // switch/stop/start logic
+        if (!runningId) {
+          startSession(it.id);
+          return;
+        }
+        const rs = sessions.find(s => s.id === runningId);
+        if (!rs) { runningId = null; persist(); return; }
+
+        if (rs.itemId === it.id) {
+          stopSession(runningId);
+        } else {
+          stopSession(runningId);
+          startSession(it.id);
+        }
+      };
+
+      wrap.appendChild(row);
+    }
+  }
+
+  function renderHistory() {
+    const hist = document.getElementById("history");
+    hist.innerHTML = "<h2>History</h2>";
+
+    // build list of dates present
+    const dates = Array.from(new Set(sessions.map(s => s.dateKey))).sort().reverse();
+    if (dates.length === 0) {
+      hist.innerHTML += "<p>No sessions yet.</p>";
+      return;
+    }
+
+    for (const d of dates) {
+      const { total, byItem } = totalsForDate(d);
+
+      const div = document.createElement("div");
+      div.className = "row";
+
+      const left = document.createElement("div");
+      left.className = "name";
+      left.textContent = d;
+
+      const right = document.createElement("div");
+      right.className = "time";
+      right.textContent = fmt(total);
+
+      div.appendChild(left);
+      div.appendChild(right);
+
+      div.onclick = () => {
+        // simple breakdown alert (replace later with a proper screen)
+        const lines = [];
+        for (const it of items) {
+          const t = byItem.get(it.id);
+          if (t) lines.push(`${it.name}: ${fmt(t)}`);
+        }
+        alert(`${d}\n\nTotal: ${fmt(total)}\n\n` + lines.join("\n"));
+      };
+
+      hist.appendChild(div);
+    }
+  }
+
+  function render() {
+    ensureNotCrossDay();
+    const isHistory = location.hash === "#history";
+    document.getElementById("history").style.display = isHistory ? "block" : "none";
+    document.getElementById("items").style.display = isHistory ? "none" : "block";
+    document.getElementById("todayTotal").style.display = isHistory ? "none" : "block";
+    document.getElementById("historyLink").textContent = isHistory ? "Back" : "History";
+    document.getElementById("historyLink").href = isHistory ? "#" : "#history";
+
+    if (isHistory) renderHistory();
+    else renderHome();
+  }
+
+  // add item
+  document.getElementById("addBtn").onclick = () => {
+    const input = document.getElementById("newItemName");
+    const name = input.value.trim();
+    if (!name) return;
+    items.push({ id: crypto.randomUUID(), name, createdAt: Date.now(), archived: false });
+    input.value = "";
+    persist();
+  };
+
+  window.addEventListener("hashchange", render);
+
+  // tick to update running timer display
+  setInterval(() => { if (runningId) render(); }, 1000);
+
+  render();
+</script>
+</body>
+</html>
