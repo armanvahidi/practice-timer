@@ -40,6 +40,111 @@ const supabaseAnonKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYm
 const sb = supabase.createClient(supabaseUrl, supabaseAnonKey);
 
   // ---------- tiny storage helpers ----------
+  <div id="authBox" style="margin:12px 0; display:none;">
+  <input id="email" placeholder="Email for login" />
+  <input id="otp" placeholder="Code (after you receive it)" />
+  <button id="sendCodeBtn">Send code</button>
+  <button id="verifyBtn">Verify</button>
+</div>
+
+  //----- added ----//
+async function requireLogin() {
+  const { data: { session } } = await sb.auth.getSession();
+  if (session) return session;
+
+  document.getElementById("authBox").style.display = "block";
+
+  document.getElementById("sendCodeBtn").onclick = async () => {
+    const email = document.getElementById("email").value.trim();
+    if (!email) return alert("Enter your email");
+    const { error } = await sb.auth.signInWithOtp({ email });
+    if (error) return alert(error.message);
+    alert("Code sent. Check your email.");
+  };
+
+  document.getElementById("verifyBtn").onclick = async () => {
+    const email = document.getElementById("email").value.trim();
+    const token = document.getElementById("otp").value.trim();
+    const { error } = await sb.auth.verifyOtp({ email, token, type: "email" });
+    if (error) return alert(error.message);
+    location.reload();
+  };
+
+  return null;
+}
+
+
+
+  //-------//
+
+
+//---------added2------//
+async function loadFromCloud() {
+  const { data: itemsData, error: itemsErr } = await sb
+    .from("practice_items")
+    .select("*")
+    .order("created_at", { ascending: true });
+
+  if (itemsErr) throw itemsErr;
+
+  const { data: sessionsData, error: sessionsErr } = await sb
+    .from("practice_sessions")
+    .select("*");
+
+  if (sessionsErr) throw sessionsErr;
+
+  items = itemsData.map(r => ({
+    id: r.id,
+    name: r.name,
+    archived: r.archived,
+    createdAt: new Date(r.created_at).getTime()
+  }));
+
+  sessions = sessionsData.map(r => ({
+    id: r.id,
+    itemId: r.item_id,
+    startTs: new Date(r.start_time).getTime(),
+    endTs: new Date(r.end_time).getTime(),
+    durationSec: r.duration_seconds,
+    dateKey: String(r.date_key)
+  }));
+
+  runningId = null; // we’ll keep “running” only in-memory for now
+}
+
+
+  ///-------//
+
+  await sb.from("practice_items").insert({ name, archived: false });
+
+
+    ///-------//
+
+await sb.from("practice_sessions").insert({
+  item_id: s.itemId,
+  start_time: new Date(s.startTs).toISOString(),
+  end_time: new Date(s.endTs).toISOString(),
+  duration_seconds: s.durationSec,
+  date_key: s.dateKey
+});
+
+
+
+
+
+    ///-------//
+
+(async () => {
+  const session = await requireLogin();
+  if (!session) return;
+  document.getElementById("authBox").style.display = "none";
+  await loadFromCloud();
+  render();
+})();
+
+
+
+    ///-------//
   const load = (k, fallback) => JSON.parse(localStorage.getItem(k) || JSON.stringify(fallback));
   const save = (k, v) => localStorage.setItem(k, JSON.stringify(v));
 
@@ -230,4 +335,5 @@ const sb = supabase.createClient(supabaseUrl, supabaseAnonKey);
 </script>
 </body>
 </html>
+
 
