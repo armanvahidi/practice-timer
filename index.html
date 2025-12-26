@@ -240,6 +240,35 @@
       });
     }
 
+
+    // -----------------------------
+    // 5b) Cloud Archive
+    // -----------------------------
+
+async function archiveItem(itemId) {
+  const { error } = await sb
+    .from("practice_items")
+    .update({ archived: true, name: "Deleted item" })
+    .eq("id", itemId);
+
+  if (error) return alert(error.message);
+
+  // Update local state and re-render
+  const it = items.find(x => x.id === itemId);
+  if (it) { it.archived = true; it.name = "Deleted item"; }
+  render();
+}
+
+
+
+
+
+
+
+
+
+
+    
     // -----------------------------
     // 6) TOTALS + UI RENDERING
     // -----------------------------
@@ -459,4 +488,5 @@
   </script>
 </body>
 </html>
+
 
