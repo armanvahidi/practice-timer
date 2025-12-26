@@ -301,7 +301,13 @@ async function archiveItem(itemId) {
   const wrap = document.getElementById("items");
   wrap.innerHTML = "";
 
-  for (const it of items.filter(x => !x.archived)) {
+  // Show active items first, then archived
+  const ordered = [
+    ...items.filter(x => !x.archived),
+    ...items.filter(x => x.archived),
+  ];
+
+  for (const it of ordered) {
     const row = document.createElement("div");
     row.className = "row";
 
@@ -310,9 +316,7 @@ async function archiveItem(itemId) {
 
     const left = document.createElement("div");
     left.className = "name";
-    left.textContent = it.archived
-      ? `${it.name} (archived)`
-      : it.name;
+    left.textContent = it.archived ? `${it.name} (archived)` : it.name;
 
     const right = document.createElement("div");
     right.className = "time";
@@ -322,37 +326,51 @@ async function archiveItem(itemId) {
     row.appendChild(right);
 
     // ---------- ARCHIVE BUTTON ----------
-    const archiveBtn = document.createElement("button");
-    archiveBtn.textContent = "Archive";
-    archiveBtn.style.marginLeft = "8px";
-    archiveBtn.style.fontSize = "14px";
+    // Only show Archive button for active items
+    if (!it.archived) {
+      const archiveBtn = document.createElement("button");
+      archiveBtn.textContent = "Archive";
+      archiveBtn.style.marginLeft = "8px";
+      archiveBtn.style.fontSize = "14px";
 
-    archiveBtn.onclick = async (e) => {
-      e.stopPropagation(); // prevent timer start/stop
+      archiveBtn.onclick = async (e) => {
+        e.stopPropagation(); // prevent timer start/stop
 
-      const ok = confirm(`Archive "${it.name}"?`);
-      if (!ok) return;
+        const ok = confirm(`Archive "${it.name}"?`);
+        if (!ok) return;
 
-      const { error } = await sb
-        .from("practice_items")
-        .update({ archived: true, name: "(deleted)" })
-        .eq("id", it.id);
+        const { error } = await sb
+          .from("practice_items")
+          .update({ archived: true })   // keep name as-is
+          .eq("id", it.id);
 
-      if (error) {
-        alert(error.message);
-        return;
-      }
+        if (error) {
+          alert(error.message);
+          return;
+        }
 
-      // Update local state
-      it.archived = true;
-      it.name = "(deleted)";
-      render();
-    };
+        // Update local state and re-render
+        it.archived = true;
+        render();
+      };
 
-    row.appendChild(archiveBtn);
+      row.appendChild(archiveBtn);
+    }
     // -----------------------------------
 
-    // Existing tap-to-start / stop logic
+    // Disable timer interactions for archived items
+    if (it.archived) {
+      // Optional: make it look visually "disabled"
+      row.style.opacity = "0.6";
+      row.style.pointerEvents = "auto"; // keep it clickable if you later add "Unarchive"
+      row.onclick = () => {
+        alert("This item is archived. Create a new item or unarchive it.");
+      };
+      wrap.appendChild(row);
+      continue;
+    }
+
+    // Existing tap-to-start / stop logic (active items only)
     row.onclick = async () => {
       if (!currentUserId) return alert("Please log in first.");
 
@@ -523,6 +541,7 @@ async function archiveItem(itemId) {
   </script>
 </body>
 </html>
+
 
 
 
