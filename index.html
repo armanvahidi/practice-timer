@@ -293,87 +293,120 @@ async function archiveItem(itemId) {
     }
 
     function renderHome() {
-      const date = todayKey();
-      const { total, byItem } = totalsForDate(date);
-      document.getElementById("todayTotal").textContent = `Today: ${fmt(total)}`;
+  const date = todayKey();
+  const { total, byItem } = totalsForDate(date);
 
-      const wrap = document.getElementById("items");
-      wrap.innerHTML = "";
+  document.getElementById("todayTotal").textContent = `Today: ${fmt(total)}`;
 
-      for (const it of items.filter(x => !x.archived)) {
-        const row = document.createElement("div");
-        row.className = "row";
+  const wrap = document.getElementById("items");
+  wrap.innerHTML = "";
 
-        const isRunning = running && running.itemId === it.id;
-        if (isRunning) row.classList.add("running");
+  for (const it of items.filter(x => !x.archived)) {
+    const row = document.createElement("div");
+    row.className = "row";
 
-        const left = document.createElement("div");
-        left.className = "name";
-        left.textContent = it.name;
+    const isRunning = running && running.itemId === it.id;
+    if (isRunning) row.classList.add("running");
 
-        const right = document.createElement("div");
-        right.className = "time";
-        right.textContent = fmt(byItem.get(it.id) || 0);
+    const left = document.createElement("div");
+    left.className = "name";
+    left.textContent = it.name;
 
-        row.appendChild(left);
-        row.appendChild(right);
+    const right = document.createElement("div");
+    right.className = "time";
+    right.textContent = fmt(byItem.get(it.id) || 0);
 
-        row.onclick = async () => {
-          if (!currentUserId) return alert("Please log in first.");
+    row.appendChild(left);
+    row.appendChild(right);
 
-          // If nothing running, start this item
-          if (!running) {
-            running = { itemId: it.id, startTs: Date.now() };
-            render();
-            return;
-          }
+    // ---------- ARCHIVE BUTTON ----------
+    const archiveBtn = document.createElement("button");
+    archiveBtn.textContent = "Archive";
+    archiveBtn.style.marginLeft = "8px";
+    archiveBtn.style.fontSize = "14px";
 
-          // If same item running, stop and save session
-          if (running.itemId === it.id) {
-            const startTs = running.startTs;
-            const endTs = Date.now();
-            const durationSec = Math.max(0, Math.floor((endTs - startTs) / 1000));
-            const dKey = todayKey();
+    archiveBtn.onclick = async (e) => {
+      e.stopPropagation(); // prevent timer start/stop
 
-            running = null;
-            render();
+      const ok = confirm(`Archive "${it.name}"?`);
+      if (!ok) return;
 
-            try {
-              setStatus("Saving session...");
-              await saveSessionToCloud(it.id, startTs, endTs, durationSec, dKey);
-              setStatus("");
-              render();
-            } catch (e) {
-              setStatus("");
-              alert(e?.message || String(e));
-            }
-            return;
-          }
+      const { error } = await sb
+        .from("practice_items")
+        .update({ archived: true, name: "(deleted)" })
+        .eq("id", it.id);
 
-          // If different item running: stop current, save, start new
-          const prev = running;
-          const prevStartTs = prev.startTs;
-          const prevEndTs = Date.now();
-          const prevDur = Math.max(0, Math.floor((prevEndTs - prevStartTs) / 1000));
-          const prevDateKey = todayKey();
-
-          running = { itemId: it.id, startTs: Date.now() };
-          render();
-
-          try {
-            setStatus("Saving session...");
-            await saveSessionToCloud(prev.itemId, prevStartTs, prevEndTs, prevDur, prevDateKey);
-            setStatus("");
-            render();
-          } catch (e) {
-            setStatus("");
-            alert(e?.message || String(e));
-          }
-        };
-
-        wrap.appendChild(row);
+      if (error) {
+        alert(error.message);
+        return;
       }
-    }
+
+      // Update local state
+      it.archived = true;
+      it.name = "(deleted)";
+      render();
+    };
+
+    row.appendChild(archiveBtn);
+    // -----------------------------------
+
+    // Existing tap-to-start / stop logic
+    row.onclick = async () => {
+      if (!currentUserId) return alert("Please log in first.");
+
+      // Start new timer
+      if (!running) {
+        running = { itemId: it.id, startTs: Date.now() };
+        render();
+        return;
+      }
+
+      // Stop current timer
+      if (running.itemId === it.id) {
+        const startTs = running.startTs;
+        const endTs = Date.now();
+        const durationSec = Math.max(0, Math.floor((endTs - startTs) / 1000));
+        const dKey = todayKey();
+
+        running = null;
+        render();
+
+        try {
+          await saveSessionToCloud(it.id, startTs, endTs, durationSec, dKey);
+          render();
+        } catch (e) {
+          alert(e?.message || String(e));
+        }
+        return;
+      }
+
+      // Switch timers
+      const prev = running;
+      const prevEndTs = Date.now();
+      const prevDur = Math.max(0, Math.floor((prevEndTs - prev.startTs) / 1000));
+      const prevDateKey = todayKey();
+
+      running = { itemId: it.id, startTs: Date.now() };
+      render();
+
+      try {
+        await saveSessionToCloud(
+          prev.itemId,
+          prev.startTs,
+          prevEndTs,
+          prevDur,
+          prevDateKey
+        );
+        render();
+      } catch (e) {
+        alert(e?.message || String(e));
+      }
+    };
+
+    wrap.appendChild(row);
+  }
+}
+
 
     function renderHistory() {
       const hist = document.getElementById("history");
@@ -488,5 +521,6 @@ async function archiveItem(itemId) {
   </script>
 </body>
 </html>
+
 
 
