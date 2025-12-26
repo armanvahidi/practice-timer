@@ -248,7 +248,7 @@
 async function archiveItem(itemId) {
   const { error } = await sb
     .from("practice_items")
-    .update({ archived: true, name: "Deleted item" })
+    .update({ archived: true })
     .eq("id", itemId);
 
   if (error) return alert(error.message);
@@ -310,7 +310,9 @@ async function archiveItem(itemId) {
 
     const left = document.createElement("div");
     left.className = "name";
-    left.textContent = it.name;
+    left.textContent = it.archived
+      ? `${it.name} (archived)`
+      : it.name;
 
     const right = document.createElement("div");
     right.className = "time";
@@ -521,6 +523,7 @@ async function archiveItem(itemId) {
   </script>
 </body>
 </html>
+
 
 
 
