@@ -484,52 +484,7 @@ async function archiveItem(itemId) {
     }
 
 
-// ---------- CLEAR TODAY BUTTON ----------
-const clearTodayBtn = document.createElement("button");
-clearTodayBtn.textContent = "Clear today";
-clearTodayBtn.style.marginLeft = "8px";
-clearTodayBtn.style.fontSize = "14px";
-
-clearTodayBtn.onclick = async (e) => {
-  e.stopPropagation(); // don’t start/stop timer
-
-  if (!currentUserId) return alert("Please log in first.");
-  const dKey = todayKey();
-
-  const ok = confirm(`Delete ONLY today's history for "${it.name}"?`);
-  if (!ok) return;
-
-  try {
-    // 1) delete from Supabase (only this item, only today)
-    const { error } = await sb
-      .from("practice_sessions")
-      .delete()
-      .eq("user_id", currentUserId)
-      .eq("item_id", it.id)
-      .eq("date_key", dKey);
-
-    if (error) return alert(error.message);
-
-    // 2) delete from local in-memory cache so UI updates immediately
-    sessions = sessions.filter(s => !(s.itemId === it.id && s.dateKey === dKey));
-
-    // 3) if this item is currently running, stop it too (optional safety)
-    if (running && running.itemId === it.id) {
-      running = null;
-    }
-
-    render();
-  } catch (err) {
-    alert(err?.message || String(err));
-  }
-};
-
-row.appendChild(clearTodayBtn);
-// ---------------------------------------
-
-
-
-    
+   
     // -----------------------------
     // 7) ADD ITEM BUTTON (CLOUD)
     // -----------------------------
@@ -588,6 +543,7 @@ row.appendChild(clearTodayBtn);
   </script>
 </body>
 </html>
+
 
 
 
