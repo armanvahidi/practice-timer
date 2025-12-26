@@ -264,87 +264,138 @@
     }
 
     function renderHome() {
-      const date = todayKey();
-      const { total, byItem } = totalsForDate(date);
-      document.getElementById("todayTotal").textContent = `Today: ${fmt(total)}`;
+  const date = todayKey();
+  const { total, byItem } = totalsForDate(date);
+  document.getElementById("todayTotal").textContent = `Today: ${fmt(total)}`;
 
-      const wrap = document.getElementById("items");
-      wrap.innerHTML = "";
+  const wrap = document.getElementById("items");
+  wrap.innerHTML = "";
 
-      for (const it of items.filter(x => !x.archived)) {
-        const row = document.createElement("div");
-        row.className = "row";
+  for (const it of items.filter(x => !x.archived)) {
+    const row = document.createElement("div");
+    row.className = "row";
 
-        const isRunning = running && running.itemId === it.id;
-        if (isRunning) row.classList.add("running");
+    const isRunning = running && running.itemId === it.id;
+    if (isRunning) row.classList.add("running");
 
-        const left = document.createElement("div");
-        left.className = "name";
-        left.textContent = it.name;
+    const left = document.createElement("div");
+    left.className = "name";
+    left.textContent = it.name;
 
-        const right = document.createElement("div");
-        right.className = "time";
-        right.textContent = fmt(byItem.get(it.id) || 0);
+    const right = document.createElement("div");
+    right.className = "time";
+    right.textContent = fmt(byItem.get(it.id) || 0);
 
-        row.appendChild(left);
-        row.appendChild(right);
+    row.appendChild(left);
+    row.appendChild(right);
 
-        row.onclick = async () => {
-          if (!currentUserId) return alert("Please log in first.");
+    // ---- Delete today's sessions button (per item) ----
+    const delBtn = document.createElement("button");
+    delBtn.textContent = "Delete today";
+    delBtn.style.marginLeft = "8px";
+    delBtn.style.fontSize = "14px";
 
-          // If nothing running, start this item
-          if (!running) {
-            running = { itemId: it.id, startTs: Date.now() };
-            render();
-            return;
-          }
+    delBtn.onclick = async (e) => {
+      e.stopPropagation(); // don't start/stop timer
 
-          // If same item running, stop and save session
-          if (running.itemId === it.id) {
-            const startTs = running.startTs;
-            const endTs = Date.now();
-            const durationSec = Math.max(0, Math.floor((endTs - startTs) / 1000));
-            const dKey = todayKey();
+      if (!currentUserId) return alert("Please log in first.");
 
-            running = null;
-            render();
+      const ok = confirm(`Delete today's history for "${it.name}"? This will NOT affect earlier days.`);
+      if (!ok) return;
 
-            try {
-              setStatus("Saving session...");
-              await saveSessionToCloud(it.id, startTs, endTs, durationSec, dKey);
-              setStatus("");
-              render();
-            } catch (e) {
-              setStatus("");
-              alert(e?.message || String(e));
-            }
-            return;
-          }
+      try {
+        setStatus("Deleting today's sessions...");
 
-          // If different item running: stop current, save, start new
-          const prev = running;
-          const prevStartTs = prev.startTs;
-          const prevEndTs = Date.now();
-          const prevDur = Math.max(0, Math.floor((prevEndTs - prevStartTs) / 1000));
-          const prevDateKey = todayKey();
+        // If it's currently running, stop it locally (not saved yet anyway)
+        if (running && running.itemId === it.id) {
+          running = null;
+        }
 
-          running = { itemId: it.id, startTs: Date.now() };
-          render();
+        // Delete in Supabase (today only, this item only)
+        const { error } = await sb
+          .from("practice_sessions")
+          .delete()
+          .eq("item_id", it.id)
+          .eq("date_key", todayKey());
 
-          try {
-            setStatus("Saving session...");
-            await saveSessionToCloud(prev.itemId, prevStartTs, prevEndTs, prevDur, prevDateKey);
-            setStatus("");
-            render();
-          } catch (e) {
-            setStatus("");
-            alert(e?.message || String(e));
-          }
-        };
+        if (error) {
+          setStatus("");
+          alert(error.message);
+          return;
+        }
 
-        wrap.appendChild(row);
+        // Delete locally so UI updates immediately
+        sessions = sessions.filter(s => !(s.itemId === it.id && s.dateKey === todayKey()));
+
+        setStatus("");
+        render();
+      } catch (err) {
+        setStatus("");
+        alert(err?.message || String(err));
       }
-    }
+    };
+
+    row.appendChild(delBtn);
+    // -----------------------------------------------
+
+    // Existing tap-to-start / stop logic
+    row.onclick = async () => {
+      if (!currentUserId) return alert("Please log in first.");
+
+      // If nothing running, start this item
+      if (!running) {
+        running = { itemId: it.id, startTs: Date.now() };
+        render();
+        return;
+      }
+
+      // If same item running, stop and save session
+      if (running.itemId === it.id) {
+        const startTs = running.startTs;
+        const endTs = Date.now();
+        const durationSec = Math.max(0, Math.floor((endTs - startTs) / 1000));
+        const dKey = todayKey();
+
+        running = null;
+        render();
+
+        try {
+          setStatus("Saving session...");
+          await saveSessionToCloud(it.id, startTs, endTs, durationSec, dKey);
+          setStatus("");
+          render();
+        } catch (e) {
+          setStatus("");
+          alert(e?.message || String(e));
+        }
+        return;
+      }
+
+      // If different item running: stop current, save, start new
+      const prev = running;
+      const prevStartTs = prev.startTs;
+      const prevEndTs = Date.now();
+      const prevDur = Math.max(0, Math.floor((prevEndTs - prevStartTs) / 1000));
+      const prevDateKey = todayKey();
+
+      running = { itemId: it.id, startTs: Date.now() };
+      render();
+
+      try {
+        setStatus("Saving session...");
+        await saveSessionToCloud(prev.itemId, prevStartTs, prevEndTs, prevDur, prevDateKey);
+        setStatus("");
+        render();
+      } catch (e) {
+        setStatus("");
+        alert(e?.message || String(e));
+      }
+    };
+
+    wrap.appendChild(row);
+  }
+}
+
 
     function renderHistory() {
       const hist = document.getElementById("history");
@@ -459,3 +510,4 @@
   </script>
 </body>
 </html>
+
