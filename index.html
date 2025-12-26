@@ -240,35 +240,6 @@
       });
     }
 
-
-    // -----------------------------
-    // 5b) Cloud Archive
-    // -----------------------------
-
-async function archiveItem(itemId) {
-  const { error } = await sb
-    .from("practice_items")
-    .update({ archived: true })
-    .eq("id", itemId);
-
-  if (error) return alert(error.message);
-
-  // Update local state and re-render
-  const it = items.find(x => x.id === itemId);
-  if (it) { it.archived = true; it.name = "Deleted item"; }
-  render();
-}
-
-
-
-
-
-
-
-
-
-
-    
     // -----------------------------
     // 6) TOTALS + UI RENDERING
     // -----------------------------
@@ -293,140 +264,87 @@ async function archiveItem(itemId) {
     }
 
     function renderHome() {
-  const date = todayKey();
-  const { total, byItem } = totalsForDate(date);
+      const date = todayKey();
+      const { total, byItem } = totalsForDate(date);
+      document.getElementById("todayTotal").textContent = `Today: ${fmt(total)}`;
 
-  document.getElementById("todayTotal").textContent = `Today: ${fmt(total)}`;
+      const wrap = document.getElementById("items");
+      wrap.innerHTML = "";
 
-  const wrap = document.getElementById("items");
-  wrap.innerHTML = "";
+      for (const it of items.filter(x => !x.archived)) {
+        const row = document.createElement("div");
+        row.className = "row";
 
-  // Show active items first, then archived
-  const ordered = [
-    ...items.filter(x => !x.archived),
-    ...items.filter(x => x.archived),
-  ];
+        const isRunning = running && running.itemId === it.id;
+        if (isRunning) row.classList.add("running");
 
-  for (const it of ordered) {
-    const row = document.createElement("div");
-    row.className = "row";
+        const left = document.createElement("div");
+        left.className = "name";
+        left.textContent = it.name;
 
-    const isRunning = running && running.itemId === it.id;
-    if (isRunning) row.classList.add("running");
+        const right = document.createElement("div");
+        right.className = "time";
+        right.textContent = fmt(byItem.get(it.id) || 0);
 
-    const left = document.createElement("div");
-    left.className = "name";
-    left.textContent = it.archived ? `${it.name} (archived)` : it.name;
+        row.appendChild(left);
+        row.appendChild(right);
 
-    const right = document.createElement("div");
-    right.className = "time";
-    right.textContent = fmt(byItem.get(it.id) || 0);
+        row.onclick = async () => {
+          if (!currentUserId) return alert("Please log in first.");
 
-    row.appendChild(left);
-    row.appendChild(right);
+          // If nothing running, start this item
+          if (!running) {
+            running = { itemId: it.id, startTs: Date.now() };
+            render();
+            return;
+          }
 
-    // ---------- ARCHIVE BUTTON ----------
-    // Only show Archive button for active items
-    if (!it.archived) {
-      const archiveBtn = document.createElement("button");
-      archiveBtn.textContent = "Archive";
-      archiveBtn.style.marginLeft = "8px";
-      archiveBtn.style.fontSize = "14px";
+          // If same item running, stop and save session
+          if (running.itemId === it.id) {
+            const startTs = running.startTs;
+            const endTs = Date.now();
+            const durationSec = Math.max(0, Math.floor((endTs - startTs) / 1000));
+            const dKey = todayKey();
 
-      archiveBtn.onclick = async (e) => {
-        e.stopPropagation(); // prevent timer start/stop
+            running = null;
+            render();
 
-        const ok = confirm(`Archive "${it.name}"?`);
-        if (!ok) return;
+            try {
+              setStatus("Saving session...");
+              await saveSessionToCloud(it.id, startTs, endTs, durationSec, dKey);
+              setStatus("");
+              render();
+            } catch (e) {
+              setStatus("");
+              alert(e?.message || String(e));
+            }
+            return;
+          }
 
-        const { error } = await sb
-          .from("practice_items")
-          .update({ archived: true })   // keep name as-is
-          .eq("id", it.id);
+          // If different item running: stop current, save, start new
+          const prev = running;
+          const prevStartTs = prev.startTs;
+          const prevEndTs = Date.now();
+          const prevDur = Math.max(0, Math.floor((prevEndTs - prevStartTs) / 1000));
+          const prevDateKey = todayKey();
 
-        if (error) {
-          alert(error.message);
-          return;
-        }
-
-        // Update local state and re-render
-        it.archived = true;
-        render();
-      };
-
-      row.appendChild(archiveBtn);
-    }
-    // -----------------------------------
-
-    // Disable timer interactions for archived items
-    if (it.archived) {
-      // Optional: make it look visually "disabled"
-      row.style.opacity = "0.6";
-      row.style.pointerEvents = "auto"; // keep it clickable if you later add "Unarchive"
-      row.onclick = () => {
-        alert("This item is archived. Create a new item or unarchive it.");
-      };
-      wrap.appendChild(row);
-      continue;
-    }
-
-    // Existing tap-to-start / stop logic (active items only)
-    row.onclick = async () => {
-      if (!currentUserId) return alert("Please log in first.");
-
-      // Start new timer
-      if (!running) {
-        running = { itemId: it.id, startTs: Date.now() };
-        render();
-        return;
-      }
-
-      // Stop current timer
-      if (running.itemId === it.id) {
-        const startTs = running.startTs;
-        const endTs = Date.now();
-        const durationSec = Math.max(0, Math.floor((endTs - startTs) / 1000));
-        const dKey = todayKey();
-
-        running = null;
-        render();
-
-        try {
-          await saveSessionToCloud(it.id, startTs, endTs, durationSec, dKey);
+          running = { itemId: it.id, startTs: Date.now() };
           render();
-        } catch (e) {
-          alert(e?.message || String(e));
-        }
-        return;
+
+          try {
+            setStatus("Saving session...");
+            await saveSessionToCloud(prev.itemId, prevStartTs, prevEndTs, prevDur, prevDateKey);
+            setStatus("");
+            render();
+          } catch (e) {
+            setStatus("");
+            alert(e?.message || String(e));
+          }
+        };
+
+        wrap.appendChild(row);
       }
-
-      // Switch timers
-      const prev = running;
-      const prevEndTs = Date.now();
-      const prevDur = Math.max(0, Math.floor((prevEndTs - prev.startTs) / 1000));
-      const prevDateKey = todayKey();
-
-      running = { itemId: it.id, startTs: Date.now() };
-      render();
-
-      try {
-        await saveSessionToCloud(
-          prev.itemId,
-          prev.startTs,
-          prevEndTs,
-          prevDur,
-          prevDateKey
-        );
-        render();
-      } catch (e) {
-        alert(e?.message || String(e));
-      }
-    };
-
-    wrap.appendChild(row);
-  }
-}
-
+    }
 
     function renderHistory() {
       const hist = document.getElementById("history");
@@ -483,8 +401,6 @@ async function archiveItem(itemId) {
       else renderHome();
     }
 
-
-   
     // -----------------------------
     // 7) ADD ITEM BUTTON (CLOUD)
     // -----------------------------
@@ -543,10 +459,3 @@ async function archiveItem(itemId) {
   </script>
 </body>
 </html>
-
-
-
-
-
-
-
