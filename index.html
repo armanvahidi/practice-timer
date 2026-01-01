@@ -375,9 +375,29 @@ async function editFromItemRow(itemId) {
       }
     }
 
+
+    async function deleteSessionFromCloud(sessionId) {
+  if (!currentUserId) return alert("Please log in first.");
+
+  const { error } = await sb
+    .from("practice_sessions")
+    .delete()
+    .eq("id", sessionId)
+    .eq("user_id", currentUserId);
+
+  if (error) throw error;
+
+  // Update local in-memory state
+  sessions = sessions.filter(s => s.id !== sessionId);
+}
+
+    
     // -----------------------------
     // 6) TOTALS + UI RENDERING
     // -----------------------------
+    
+    let historySelectedDate = null; // dateKey string or null
+
     function totalsForDate(dateKey) {
       const daySessions = sessions.filter(s => s.dateKey === dateKey);
       const byItem = new Map();
@@ -511,91 +531,108 @@ editBtn.onclick = async (ev) => {
     }
 
     function renderHistory() {
-      const hist = document.getElementById("history");
-      hist.innerHTML = "<h2>History</h2>";
+  const hist = document.getElementById("history");
+  hist.innerHTML = "<h2>History</h2>";
 
-      const dates = Array.from(new Set(sessions.map(s => s.dateKey))).sort().reverse();
-      if (dates.length === 0) {
-        hist.innerHTML += "<p>No sessions yet.</p>";
-        return;
-      }
-
-      for (const d of dates) {
-        const { total, byItem } = totalsForDate(d);
-
-        const div = document.createElement("div");
-        div.className = "row";
-
-        const left = document.createElement("div");
-        left.className = "name";
-        left.textContent = d;
-
-        const right = document.createElement("div");
-        right.className = "time";
-        right.textContent = fmt(total);
-
-        div.appendChild(left);
-        div.appendChild(right);
-
-        div.onclick = () => {
-  // Toggle a detail block under this date row
-  const existing = div.nextSibling;
-  if (existing && existing.classList && existing.classList.contains("dayDetail")) {
-    existing.remove();
+  const dates = Array.from(new Set(sessions.map(s => s.dateKey))).sort().reverse();
+  if (dates.length === 0) {
+    hist.innerHTML += "<p>No sessions yet.</p>";
     return;
   }
 
-  const detail = document.createElement("div");
-  detail.className = "dayDetail";
-  detail.style.margin = "6px 0 14px 0";
-  detail.style.padding = "10px";
-  detail.style.border = "1px solid #eee";
-  detail.style.borderRadius = "10px";
+  // If nothing selected yet, default to most recent date
+  if (!historySelectedDate) historySelectedDate = dates[0];
+
+  // Date picker list (left as simple rows)
+  for (const d of dates) {
+    const { total } = totalsForDate(d);
+
+    const div = document.createElement("div");
+    div.className = "row";
+    if (d === historySelectedDate) div.classList.add("running"); // reuse style as highlight
+
+    const left = document.createElement("div");
+    left.className = "name";
+    left.textContent = d;
+
+    const right = document.createElement("div");
+    right.className = "time";
+    right.textContent = fmt(total);
+
+    div.appendChild(left);
+    div.appendChild(right);
+
+    div.onclick = () => {
+      historySelectedDate = d;
+      render(); // re-render history view
+    };
+
+    hist.appendChild(div);
+  }
+
+  // Sessions list for selected date
+  const h3 = document.createElement("h3");
+  h3.textContent = `Sessions for ${historySelectedDate}`;
+  h3.style.marginTop = "16px";
+  hist.appendChild(h3);
 
   const daySessions = sessions
-    .filter(s => s.dateKey === d)
-    .sort((a, b) => b.endTs - a.endTs);
+    .filter(s => s.dateKey === historySelectedDate)
+    .slice()
+    .sort((a, b) => b.endTs - a.endTs); // most recent first
 
   if (daySessions.length === 0) {
-    detail.textContent = "No sessions.";
-    div.parentNode.insertBefore(detail, div.nextSibling);
+    const p = document.createElement("p");
+    p.textContent = "No sessions for this day.";
+    hist.appendChild(p);
     return;
   }
 
   for (const s of daySessions) {
     const it = items.find(x => x.id === s.itemId);
+    const itemName = it ? it.name : "(Unknown item)";
+
     const row = document.createElement("div");
-    row.style.display = "flex";
-    row.style.justifyContent = "space-between";
-    row.style.alignItems = "center";
-    row.style.gap = "8px";
-    row.style.padding = "8px 0";
-    row.style.borderTop = "1px solid #f0f0f0";
+    row.className = "row";
 
     const left = document.createElement("div");
-    left.textContent = `${it?.name || "Unknown"} — ${fmt(s.durationSec)}`;
+    left.className = "name";
+    left.textContent = itemName;
 
-    const btn = document.createElement("button");
-    btn.type = "button";
-    btn.textContent = "Edit";
-    btn.onclick = async (ev) => {
+    const rightWrap = document.createElement("div");
+    rightWrap.className = "rightWrap";
+
+    const timeEl = document.createElement("div");
+    timeEl.className = "time";
+    timeEl.textContent = fmt(s.durationSec || 0);
+
+    const delBtn = document.createElement("button");
+    delBtn.type = "button";
+    delBtn.textContent = "Delete";
+    delBtn.onclick = async (ev) => {
       ev.stopPropagation();
-      const currentMins = (s.durationSec / 60).toFixed(2).replace(/\.00$/, "");
-      let mins = prompt("Set session duration (minutes):", currentMins);
-      if (mins === null) return;
-      mins = mins.trim();
-      await editSessionDuration(s.id, mins);
-      // rerender history so the list updates
-      render();
+      if (!confirm(`Delete this session?\n\n${itemName} — ${fmt(s.durationSec || 0)}`)) return;
+
+      try {
+        setStatus("Deleting session...");
+        await deleteSessionFromCloud(s.id);
+        setStatus("");
+        render(); // refresh totals + list
+      } catch (e) {
+        setStatus("");
+        alert(e?.message || String(e));
+      }
     };
 
-    row.appendChild(left);
-    row.appendChild(btn);
-    detail.appendChild(row);
-  }
+    rightWrap.appendChild(timeEl);
+    rightWrap.appendChild(delBtn);
 
-  div.parentNode.insertBefore(detail, div.nextSibling);
-};
+    row.appendChild(left);
+    row.appendChild(rightWrap);
+
+    hist.appendChild(row);
+  }
+}
 
 
         hist.appendChild(div);
@@ -682,4 +719,5 @@ editBtn.onclick = async (ev) => {
   </script>
 </body>
 </html>
+
 
