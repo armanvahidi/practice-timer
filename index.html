@@ -95,10 +95,115 @@
 
     function minutesToSeconds(mins) {
       const n = Number(String(mins).replace(",", "."));
-      if (!Number.isFinite(n) || n <= 0) return null;
+      if (!Number.isFinite(n) || n < 0) return null;
       return Math.round(n * 60);
     }
 
+async function updateSessionInCloud(sessionId, newDurationSec, newStartTs, newEndTs, newDateKey) {
+  const { data, error } = await sb
+    .from("practice_sessions")
+    .update({
+      duration_seconds: newDurationSec,
+      start_time: new Date(newStartTs).toISOString(),
+      end_time: new Date(newEndTs).toISOString(),
+      date_key: newDateKey
+    })
+    .eq("id", sessionId)
+    .select()
+    .single();
+
+  if (error) throw error;
+
+  // Update in-memory session
+  const idx = sessions.findIndex(s => s.id === sessionId);
+  if (idx >= 0) {
+    sessions[idx] = {
+      id: data.id,
+      itemId: data.item_id,
+      startTs: new Date(data.start_time).getTime(),
+      endTs: new Date(data.end_time).getTime(),
+      durationSec: data.duration_seconds,
+      dateKey: parseDateKey(data.date_key)
+    };
+  }
+}
+
+    function latestSessionForItemOnDate(itemId, dKey) {
+  const list = sessions
+    .filter(s => s.itemId === itemId && s.dateKey === dKey)
+    .sort((a, b) => b.endTs - a.endTs);
+  return list[0] || null;
+}
+
+async function editSessionDuration(sessionId, minutes) {
+  const durationSec = minutesToSeconds(minutes);
+  if (durationSec === null) return alert("Enter a valid number of minutes (e.g., 30).");
+
+  const s = sessions.find(x => x.id === sessionId);
+  if (!s) return alert("Session not found.");
+
+  const newEndTs = s.endTs;                 // keep end fixed
+  const newStartTs = newEndTs - durationSec * 1000;
+  const newDateKey = dateKeyForTs(newEndTs); // London local day of end time
+
+  try {
+    setStatus("Updating session...");
+    await updateSessionInCloud(sessionId, durationSec, newStartTs, newEndTs, newDateKey);
+    setStatus("");
+    render();
+  } catch (e) {
+    setStatus("");
+    alert(e?.message || String(e));
+  }
+}
+
+async function editFromItemRow(itemId) {
+  if (!currentUserId) return alert("Please log in first.");
+
+  const minsInput = document.getElementById("manualMinutes").value.trim();
+
+  // If this item is running, force-stop and SAVE as typed duration.
+  if (running && running.itemId === itemId) {
+    const durationSec = minutesToSeconds(minsInput);
+    if (durationSec === null) return alert("Enter a valid number of minutes (e.g., 30).");
+
+    const endTs = Date.now();
+    const startTs = endTs - durationSec * 1000;
+    const dKey = dateKeyForTs(endTs);
+
+    running = null;
+    render();
+
+    try {
+      setStatus("Saving edited (forced-stop) session...");
+      await saveSessionToCloud(itemId, startTs, endTs, durationSec, dKey);
+      setStatus("");
+      render();
+    } catch (e) {
+      setStatus("");
+      alert(e?.message || String(e));
+    }
+    return;
+  }
+
+  // Otherwise: edit the most recent session for that item today
+  const dKey = todayKey();
+  const latest = latestSessionForItemOnDate(itemId, dKey);
+  if (!latest) return alert("No session for this item today to edit.");
+
+  // If minutes box is empty, prompt with current minutes as default
+  let mins = minsInput;
+  if (!mins) {
+    const currentMins = (latest.durationSec / 60).toFixed(2).replace(/\.00$/, "");
+    mins = prompt("Set session duration (minutes):", currentMins);
+    if (mins === null) return; // cancelled
+    mins = mins.trim();
+  }
+
+  await editSessionDuration(latest.id, mins);
+}
+
+    
     // -----------------------------
     // 3) IN-MEMORY STATE (NO LOCALSTORAGE)
     // -----------------------------
@@ -384,9 +489,20 @@
           await addManualTime(it.id, mins);
         };
 
+        const editBtn = document.createElement("button");
+editBtn.type = "button";
+editBtn.textContent = "Edit";
+editBtn.onclick = async (ev) => {
+  ev.stopPropagation();
+  await editFromItemRow(it.id);
+};
+
+
+
         rightWrap.appendChild(timeEl);
         rightWrap.appendChild(addTimeBtn);
-
+        rightWrap.appendChild(editBtn);
+        
         row.appendChild(left);
         row.appendChild(rightWrap);
 
@@ -422,13 +538,65 @@
         div.appendChild(right);
 
         div.onclick = () => {
-          const lines = [];
-          for (const it of items) {
-            const t = byItem.get(it.id);
-            if (t) lines.push(`${it.name}: ${fmt(t)}`);
-          }
-          alert(`${d}\n\nTotal: ${fmt(total)}\n\n` + lines.join("\n"));
-        };
+  // Toggle a detail block under this date row
+  const existing = div.nextSibling;
+  if (existing && existing.classList && existing.classList.contains("dayDetail")) {
+    existing.remove();
+    return;
+  }
+
+  const detail = document.createElement("div");
+  detail.className = "dayDetail";
+  detail.style.margin = "6px 0 14px 0";
+  detail.style.padding = "10px";
+  detail.style.border = "1px solid #eee";
+  detail.style.borderRadius = "10px";
+
+  const daySessions = sessions
+    .filter(s => s.dateKey === d)
+    .sort((a, b) => b.endTs - a.endTs);
+
+  if (daySessions.length === 0) {
+    detail.textContent = "No sessions.";
+    div.parentNode.insertBefore(detail, div.nextSibling);
+    return;
+  }
+
+  for (const s of daySessions) {
+    const it = items.find(x => x.id === s.itemId);
+    const row = document.createElement("div");
+    row.style.display = "flex";
+    row.style.justifyContent = "space-between";
+    row.style.alignItems = "center";
+    row.style.gap = "8px";
+    row.style.padding = "8px 0";
+    row.style.borderTop = "1px solid #f0f0f0";
+
+    const left = document.createElement("div");
+    left.textContent = `${it?.name || "Unknown"} — ${fmt(s.durationSec)}`;
+
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.textContent = "Edit";
+    btn.onclick = async (ev) => {
+      ev.stopPropagation();
+      const currentMins = (s.durationSec / 60).toFixed(2).replace(/\.00$/, "");
+      let mins = prompt("Set session duration (minutes):", currentMins);
+      if (mins === null) return;
+      mins = mins.trim();
+      await editSessionDuration(s.id, mins);
+      // rerender history so the list updates
+      render();
+    };
+
+    row.appendChild(left);
+    row.appendChild(btn);
+    detail.appendChild(row);
+  }
+
+  div.parentNode.insertBefore(detail, div.nextSibling);
+};
+
 
         hist.appendChild(div);
       }
@@ -514,3 +682,4 @@
   </script>
 </body>
 </html>
+
