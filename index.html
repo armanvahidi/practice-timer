@@ -8,21 +8,27 @@
     body { font-family: -apple-system, system-ui, Arial; margin: 16px; }
     h1 { margin: 0 0 8px 0; font-size: 22px; }
     .total { font-size: 28px; margin: 8px 0 16px 0; }
-    .row { display: flex; justify-content: space-between; align-items: center;
-           padding: 12px 10px; border: 1px solid #ddd; border-radius: 10px; margin-bottom: 10px; }
-    .name { font-size: 18px; }
+    .row {
+      display: flex; justify-content: space-between; align-items: center;
+      padding: 12px 10px; border: 1px solid #ddd; border-radius: 10px; margin-bottom: 10px;
+    }
+    .name { font-size: 18px; cursor: pointer; }
     .time { font-variant-numeric: tabular-nums; opacity: 0.8; }
     .running { border-color: #000; }
-    .controls { display:flex; gap:8px; margin: 12px 0; }
+    .controls { display:flex; gap:8px; margin: 12px 0; flex-wrap: wrap; }
     button { padding: 10px 12px; border-radius: 10px; border: 1px solid #ccc; background: #fff; }
     input { padding: 10px 12px; border-radius: 10px; border: 1px solid #ccc; width: 100%; }
     input, textarea, select { font-size: 16px; }
     a { display:inline-block; margin-top: 12px; }
     #authBox { margin: 12px 0; padding: 12px; border: 1px solid #ddd; border-radius: 10px; display:none; }
-    #authRow { display:flex; gap:8px; margin-top: 8px; }
+    #authRow { display:flex; gap:8px; margin-top: 8px; flex-wrap: wrap; }
     #status { margin: 10px 0; opacity: 0.85; }
+    .rightWrap { display:flex; align-items:center; gap:8px; }
+    .controls > * { flex: 1 1 180px; }
+    .controls button { flex: 0 0 auto; }
   </style>
 </head>
+
 <body>
   <h1>Piano Practice</h1>
 
@@ -30,29 +36,28 @@
 
   <div id="authBox">
     <div>
-      <input id="email" placeholder="Email for login" />
+      <input id="email" placeholder="Email for login" autocomplete="email" />
     </div>
     <div id="authRow">
-      <button id="sendCodeBtn">Send code</button>
+      <button id="sendCodeBtn" type="button">Send code</button>
     </div>
     <div style="margin-top:8px;">
-      <input id="otp" placeholder="Enter code from email" />
+      <input id="otp" placeholder="Enter code from email" inputmode="numeric" autocomplete="one-time-code" />
     </div>
     <div id="authRow">
-      <button id="verifyBtn">Verify</button>
-      <button id="signOutBtn">Sign out</button>
+      <button id="verifyBtn" type="button">Verify</button>
+      <button id="signOutBtn" type="button">Sign out</button>
     </div>
   </div>
 
   <div class="total" id="todayTotal">Today: 00:00:00</div>
 
   <div class="controls">
-  <input id="newItemName" placeholder="Add item (e.g., Arpeggios)" />
-  <button id="addBtn">Add</button>
+    <input id="newItemName" placeholder="Add item (e.g., Arpeggios)" />
+    <button id="addBtn" type="button">Add</button>
 
-  <input id="manualMinutes" inputmode="numeric" placeholder="Minutes (e.g., 30)" />
-</div>
-
+    <input id="manualMinutes" inputmode="decimal" placeholder="Minutes to add (e.g., 30)" />
+  </div>
 
   <div id="items"></div>
 
@@ -69,57 +74,31 @@
     const sb = supabase.createClient(supabaseUrl, supabaseAnonKey);
 
     // -----------------------------
-    // 2) SMALL HELPERS
+    // 2) HELPERS
     // -----------------------------
     const statusEl = document.getElementById("status");
     const setStatus = (msg) => { statusEl.textContent = msg || ""; };
 
-    const todayKey = () => new Date().toISOString().slice(0,10); // YYYY-MM-DD
-    const pad = n => String(n).padStart(2,'0');
-    const fmt = secs => {
+    // Note: this uses UTC date (because toISOString). Keeping as-is from your original.
+    const todayKey = () => new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+
+    const pad = (n) => String(n).padStart(2, "0");
+    const fmt = (secs) => {
       secs = Math.max(0, Math.floor(secs));
-      const h = Math.floor(secs/3600);
-      const m = Math.floor((secs%3600)/60);
-      const s = secs%60;
+      const h = Math.floor(secs / 3600);
+      const m = Math.floor((secs % 3600) / 60);
+      const s = secs % 60;
       return `${pad(h)}:${pad(m)}:${pad(s)}`;
     };
 
-    function parseDateKey(d) {
-      // Supabase returns date as "YYYY-MM-DD"
-      return String(d);
+    const parseDateKey = (d) => String(d);
+
+    function minutesToSeconds(mins) {
+      const n = Number(String(mins).replace(",", "."));
+      if (!Number.isFinite(n) || n <= 0) return null;
+      return Math.round(n * 60);
     }
 
-function minutesToSeconds(mins) {
-  const n = Number(mins);
-  if (!Number.isFinite(n)) return null;
-  if (n <= 0) return null;
-  // allow decimals like 12.5 minutes if you want; remove Math.round if not
-  return Math.round(n * 60);
-}
-
-async function addManualTime(itemId, minutes) {
-  if (!currentUserId) return alert("Please log in first.");
-
-  const durationSec = minutesToSeconds(minutes);
-  if (!durationSec) return alert("Enter a valid number of minutes (e.g., 30).");
-
-  // Create a session that ends now and starts durationSec earlier
-  const endTs = Date.now();
-  const startTs = endTs - durationSec * 1000;
-  const dKey = todayKey();
-
-  try {
-    setStatus("Saving manual time...");
-    await saveSessionToCloud(itemId, startTs, endTs, durationSec, dKey);
-    setStatus("");
-    render();
-  } catch (e) {
-    setStatus("");
-    alert(e?.message || String(e));
-  }
-}
-
-    
     // -----------------------------
     // 3) IN-MEMORY STATE (NO LOCALSTORAGE)
     // -----------------------------
@@ -127,8 +106,6 @@ async function addManualTime(itemId, minutes) {
 
     let items = [];      // { id, name, archived, createdAt }
     let sessions = [];   // { id, itemId, startTs, endTs, durationSec, dateKey }
-
-    // Only the currently-running timer is local/in-memory
     let running = null;  // { itemId, startTs } or null
 
     // -----------------------------
@@ -197,7 +174,6 @@ async function addManualTime(itemId, minutes) {
 
       setStatus("Loading from cloud...");
 
-      // Load items
       const { data: itemsData, error: itemsErr } = await sb
         .from("practice_items")
         .select("*")
@@ -212,7 +188,6 @@ async function addManualTime(itemId, minutes) {
         createdAt: new Date(r.created_at).getTime()
       }));
 
-      // Load sessions
       const { data: sessionsData, error: sessionsErr } = await sb
         .from("practice_sessions")
         .select("*");
@@ -274,6 +249,27 @@ async function addManualTime(itemId, minutes) {
       });
     }
 
+    async function addManualTime(itemId, minutes) {
+      if (!currentUserId) return alert("Please log in first.");
+
+      const durationSec = minutesToSeconds(minutes);
+      if (!durationSec) return alert("Enter a valid number of minutes (e.g., 30).");
+
+      const endTs = Date.now();
+      const startTs = endTs - durationSec * 1000;
+      const dKey = todayKey();
+
+      try {
+        setStatus("Saving manual time...");
+        await saveSessionToCloud(itemId, startTs, endTs, durationSec, dKey);
+        setStatus("");
+        render();
+      } catch (e) {
+        setStatus("");
+        alert(e?.message || String(e));
+      }
+    }
+
     // -----------------------------
     // 6) TOTALS + UI RENDERING
     // -----------------------------
@@ -287,7 +283,6 @@ async function addManualTime(itemId, minutes) {
         byItem.set(s.itemId, (byItem.get(s.itemId) || 0) + (s.durationSec || 0));
       }
 
-      // Add running time for today
       if (running && dateKey === todayKey()) {
         const runningSecs = Math.floor((Date.now() - running.startTs) / 1000);
         total += runningSecs;
@@ -295,6 +290,59 @@ async function addManualTime(itemId, minutes) {
       }
 
       return { total, byItem };
+    }
+
+    async function toggleTimerForItem(itemId) {
+      if (!currentUserId) return alert("Please log in first.");
+
+      // Start if nothing running
+      if (!running) {
+        running = { itemId, startTs: Date.now() };
+        render();
+        return;
+      }
+
+      // Stop if same item running
+      if (running.itemId === itemId) {
+        const startTs = running.startTs;
+        const endTs = Date.now();
+        const durationSec = Math.max(0, Math.floor((endTs - startTs) / 1000));
+        const dKey = todayKey();
+
+        running = null;
+        render();
+
+        try {
+          setStatus("Saving session...");
+          await saveSessionToCloud(itemId, startTs, endTs, durationSec, dKey);
+          setStatus("");
+          render();
+        } catch (e) {
+          setStatus("");
+          alert(e?.message || String(e));
+        }
+        return;
+      }
+
+      // Switch items: stop previous, save, start new
+      const prev = running;
+      const prevStartTs = prev.startTs;
+      const prevEndTs = Date.now();
+      const prevDur = Math.max(0, Math.floor((prevEndTs - prevStartTs) / 1000));
+      const prevDateKey = todayKey();
+
+      running = { itemId, startTs: Date.now() };
+      render();
+
+      try {
+        setStatus("Saving session...");
+        await saveSessionToCloud(prev.itemId, prevStartTs, prevEndTs, prevDur, prevDateKey);
+        setStatus("");
+        render();
+      } catch (e) {
+        setStatus("");
+        alert(e?.message || String(e));
+      }
     }
 
     function renderHome() {
@@ -307,97 +355,44 @@ async function addManualTime(itemId, minutes) {
 
       for (const it of items.filter(x => !x.archived)) {
         const row = document.createElement("div");
-row.className = "row";
+        row.className = "row";
 
-const isRunning = running && running.itemId === it.id;
-if (isRunning) row.classList.add("running");
+        const isRunning = running && running.itemId === it.id;
+        if (isRunning) row.classList.add("running");
 
-const left = document.createElement("div");
-left.className = "name";
-left.textContent = it.name;
+        const left = document.createElement("div");
+        left.className = "name";
+        left.textContent = it.name;
+        left.onclick = (ev) => {
+          ev.stopPropagation();
+          toggleTimerForItem(it.id);
+        };
 
-const timeEl = document.createElement("div");
-timeEl.className = "time";
-timeEl.textContent = fmt(byItem.get(it.id) || 0);
+        const timeEl = document.createElement("div");
+        timeEl.className = "time";
+        timeEl.textContent = fmt(byItem.get(it.id) || 0);
 
-// right side: time + add-time button
-const rightWrap = document.createElement("div");
-rightWrap.style.display = "flex";
-rightWrap.style.alignItems = "center";
-rightWrap.style.gap = "8px";
+        const rightWrap = document.createElement("div");
+        rightWrap.className = "rightWrap";
 
-const addTimeBtn = document.createElement("button");
-addTimeBtn.type = "button";
-addTimeBtn.textContent = "+ Add time";
-addTimeBtn.onclick = async (ev) => {
-  ev.stopPropagation();
-  const mins = document.getElementById("manualMinutes").value.trim();
-  await addManualTime(it.id, mins);
-};
+        const addTimeBtn = document.createElement("button");
+        addTimeBtn.type = "button";
+        addTimeBtn.textContent = "+ Add time";
+        addTimeBtn.onclick = async (ev) => {
+          ev.stopPropagation();
+          const mins = document.getElementById("manualMinutes").value.trim();
+          await addManualTime(it.id, mins);
+        };
 
-rightWrap.appendChild(timeEl);
-rightWrap.appendChild(addTimeBtn);
+        rightWrap.appendChild(timeEl);
+        rightWrap.appendChild(addTimeBtn);
 
-row.appendChild(left);
-row.appendChild(rightWrap);
+        row.appendChild(left);
+        row.appendChild(rightWrap);
 
-// ONLY clicking the name toggles start/stop
-left.onclick = async (ev) => {
-  ev.stopPropagation();
-  if (!currentUserId) return alert("Please log in first.");
-
-  // start if nothing running
-  if (!running) {
-    running = { itemId: it.id, startTs: Date.now() };
-    render();
-    return;
-  }
-
-  // stop if same item
-  if (running.itemId === it.id) {
-    const startTs = running.startTs;
-    const endTs = Date.now();
-    const durationSec = Math.max(0, Math.floor((endTs - startTs) / 1000));
-    const dKey = todayKey();
-
-    running = null;
-    render();
-
-    try {
-      setStatus("Saving session...");
-      await saveSessionToCloud(it.id, startTs, endTs, durationSec, dKey);
-      setStatus("");
-      render();
-    } catch (e) {
-      setStatus("");
-      alert(e?.message || String(e));
+        wrap.appendChild(row);
+      }
     }
-    return;
-  }
-
-  // switch items: stop previous, save, start new
-  const prev = running;
-  const prevStartTs = prev.startTs;
-  const prevEndTs = Date.now();
-  const prevDur = Math.max(0, Math.floor((prevEndTs - prevStartTs) / 1000));
-  const prevDateKey = todayKey();
-
-  running = { itemId: it.id, startTs: Date.now() };
-  render();
-
-  try {
-    setStatus("Saving session...");
-    await saveSessionToCloud(prev.itemId, prevStartTs, prevEndTs, prevDur, prevDateKey);
-    setStatus("");
-    render();
-  } catch (e) {
-    setStatus("");
-    alert(e?.message || String(e));
-  }
-};
-
-wrap.appendChild(row);
-
 
     function renderHistory() {
       const hist = document.getElementById("history");
@@ -476,13 +471,20 @@ wrap.appendChild(row);
       }
     };
 
+    // Optional: press Enter in minutes box to add time to the currently running item (if any)
+    document.getElementById("manualMinutes").addEventListener("keydown", async (e) => {
+      if (e.key !== "Enter") return;
+      if (!running) return; // only if something is running
+      const mins = e.target.value.trim();
+      await addManualTime(running.itemId, mins);
+    });
+
     // -----------------------------
     // 8) STARTUP / BOOTSTRAP
     // -----------------------------
     window.addEventListener("hashchange", render);
 
     setInterval(() => {
-      // Update running timer display
       if (running) render();
     }, 1000);
 
@@ -512,4 +514,3 @@ wrap.appendChild(row);
   </script>
 </body>
 </html>
-
