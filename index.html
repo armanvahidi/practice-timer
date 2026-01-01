@@ -47,9 +47,12 @@
   <div class="total" id="todayTotal">Today: 00:00:00</div>
 
   <div class="controls">
-    <input id="newItemName" placeholder="Add item (e.g., Arpeggios)" />
-    <button id="addBtn">Add</button>
-  </div>
+  <input id="newItemName" placeholder="Add item (e.g., Arpeggios)" />
+  <button id="addBtn">Add</button>
+
+  <input id="manualMinutes" inputmode="numeric" placeholder="Minutes (e.g., 30)" />
+</div>
+
 
   <div id="items"></div>
 
@@ -86,6 +89,37 @@
       return String(d);
     }
 
+function minutesToSeconds(mins) {
+  const n = Number(mins);
+  if (!Number.isFinite(n)) return null;
+  if (n <= 0) return null;
+  // allow decimals like 12.5 minutes if you want; remove Math.round if not
+  return Math.round(n * 60);
+}
+
+async function addManualTime(itemId, minutes) {
+  if (!currentUserId) return alert("Please log in first.");
+
+  const durationSec = minutesToSeconds(minutes);
+  if (!durationSec) return alert("Enter a valid number of minutes (e.g., 30).");
+
+  // Create a session that ends now and starts durationSec earlier
+  const endTs = Date.now();
+  const startTs = endTs - durationSec * 1000;
+  const dKey = todayKey();
+
+  try {
+    setStatus("Saving manual time...");
+    await saveSessionToCloud(itemId, startTs, endTs, durationSec, dKey);
+    setStatus("");
+    render();
+  } catch (e) {
+    setStatus("");
+    alert(e?.message || String(e));
+  }
+}
+
+    
     // -----------------------------
     // 3) IN-MEMORY STATE (NO LOCALSTORAGE)
     // -----------------------------
@@ -273,78 +307,97 @@
 
       for (const it of items.filter(x => !x.archived)) {
         const row = document.createElement("div");
-        row.className = "row";
+row.className = "row";
 
-        const isRunning = running && running.itemId === it.id;
-        if (isRunning) row.classList.add("running");
+const isRunning = running && running.itemId === it.id;
+if (isRunning) row.classList.add("running");
 
-        const left = document.createElement("div");
-        left.className = "name";
-        left.textContent = it.name;
+const left = document.createElement("div");
+left.className = "name";
+left.textContent = it.name;
 
-        const right = document.createElement("div");
-        right.className = "time";
-        right.textContent = fmt(byItem.get(it.id) || 0);
+const timeEl = document.createElement("div");
+timeEl.className = "time";
+timeEl.textContent = fmt(byItem.get(it.id) || 0);
 
-        row.appendChild(left);
-        row.appendChild(right);
+// right side: time + add-time button
+const rightWrap = document.createElement("div");
+rightWrap.style.display = "flex";
+rightWrap.style.alignItems = "center";
+rightWrap.style.gap = "8px";
 
-        row.onclick = async () => {
-          if (!currentUserId) return alert("Please log in first.");
+const addTimeBtn = document.createElement("button");
+addTimeBtn.type = "button";
+addTimeBtn.textContent = "+ Add time";
+addTimeBtn.onclick = async (ev) => {
+  ev.stopPropagation();
+  const mins = document.getElementById("manualMinutes").value.trim();
+  await addManualTime(it.id, mins);
+};
 
-          // If nothing running, start this item
-          if (!running) {
-            running = { itemId: it.id, startTs: Date.now() };
-            render();
-            return;
-          }
+rightWrap.appendChild(timeEl);
+rightWrap.appendChild(addTimeBtn);
 
-          // If same item running, stop and save session
-          if (running.itemId === it.id) {
-            const startTs = running.startTs;
-            const endTs = Date.now();
-            const durationSec = Math.max(0, Math.floor((endTs - startTs) / 1000));
-            const dKey = todayKey();
+row.appendChild(left);
+row.appendChild(rightWrap);
 
-            running = null;
-            render();
+// ONLY clicking the name toggles start/stop
+left.onclick = async (ev) => {
+  ev.stopPropagation();
+  if (!currentUserId) return alert("Please log in first.");
 
-            try {
-              setStatus("Saving session...");
-              await saveSessionToCloud(it.id, startTs, endTs, durationSec, dKey);
-              setStatus("");
-              render();
-            } catch (e) {
-              setStatus("");
-              alert(e?.message || String(e));
-            }
-            return;
-          }
+  // start if nothing running
+  if (!running) {
+    running = { itemId: it.id, startTs: Date.now() };
+    render();
+    return;
+  }
 
-          // If different item running: stop current, save, start new
-          const prev = running;
-          const prevStartTs = prev.startTs;
-          const prevEndTs = Date.now();
-          const prevDur = Math.max(0, Math.floor((prevEndTs - prevStartTs) / 1000));
-          const prevDateKey = todayKey();
+  // stop if same item
+  if (running.itemId === it.id) {
+    const startTs = running.startTs;
+    const endTs = Date.now();
+    const durationSec = Math.max(0, Math.floor((endTs - startTs) / 1000));
+    const dKey = todayKey();
 
-          running = { itemId: it.id, startTs: Date.now() };
-          render();
+    running = null;
+    render();
 
-          try {
-            setStatus("Saving session...");
-            await saveSessionToCloud(prev.itemId, prevStartTs, prevEndTs, prevDur, prevDateKey);
-            setStatus("");
-            render();
-          } catch (e) {
-            setStatus("");
-            alert(e?.message || String(e));
-          }
-        };
-
-        wrap.appendChild(row);
-      }
+    try {
+      setStatus("Saving session...");
+      await saveSessionToCloud(it.id, startTs, endTs, durationSec, dKey);
+      setStatus("");
+      render();
+    } catch (e) {
+      setStatus("");
+      alert(e?.message || String(e));
     }
+    return;
+  }
+
+  // switch items: stop previous, save, start new
+  const prev = running;
+  const prevStartTs = prev.startTs;
+  const prevEndTs = Date.now();
+  const prevDur = Math.max(0, Math.floor((prevEndTs - prevStartTs) / 1000));
+  const prevDateKey = todayKey();
+
+  running = { itemId: it.id, startTs: Date.now() };
+  render();
+
+  try {
+    setStatus("Saving session...");
+    await saveSessionToCloud(prev.itemId, prevStartTs, prevEndTs, prevDur, prevDateKey);
+    setStatus("");
+    render();
+  } catch (e) {
+    setStatus("");
+    alert(e?.message || String(e));
+  }
+};
+
+wrap.appendChild(row);
+
 
     function renderHistory() {
       const hist = document.getElementById("history");
@@ -459,3 +512,4 @@
   </script>
 </body>
 </html>
+
