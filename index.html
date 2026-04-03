@@ -328,6 +328,44 @@
       return { total, byItem };
     }
 
+  function totalsForItemAllTime() {
+    const byItem = new Map();      // itemId -> total seconds
+    const firstDate = new Map();   // itemId -> earliest YYYY-MM-DD
+
+    for (const s of sessions) {
+      const secs = s.durationSec || 0;
+      byItem.set(s.itemId, (byItem.get(s.itemId) || 0) + secs);
+
+      const existing = firstDate.get(s.itemId);
+      if (!existing || s.dateKey < existing) {
+        firstDate.set(s.itemId, s.dateKey);
+      }
+    }
+
+    // Include currently running timer in the all-time total
+    if (running) {
+      const runningSecs = Math.floor((Date.now() - running.startTs) / 1000);
+      byItem.set(running.itemId, (byItem.get(running.itemId) || 0) + runningSecs);
+
+      const runningDate = dateKeyForTs(running.startTs);
+      const existing = firstDate.get(running.itemId);
+      if (!existing || runningDate < existing) {
+        firstDate.set(running.itemId, runningDate);
+      }
+    }
+
+    return { byItem, firstDate };
+  }
+
+  function totalForItemSinceStart(itemId) {
+    return totalsForItemAllTime().byItem.get(itemId) || 0;
+  }
+
+  function firstDateForItem(itemId) {
+    return totalsForItemAllTime().firstDate.get(itemId) || null;
+  }
+
+
     function latestSessionForItemOnDate(itemId, dKey) {
       const list = sessions
         .filter(s => s.itemId === itemId && s.dateKey === dKey)
@@ -483,62 +521,80 @@
     // =============================
     // 8) RENDERING
     // =============================
-    function renderHome() {
-      const date = todayKey();
-      const { total, byItem } = totalsForDate(date);
-      document.getElementById("todayTotal").textContent = `Today: ${fmt(total)}`;
+ function renderHome() {
+  const date = todayKey();
+  const { total, byItem } = totalsForDate(date);
+  const { byItem: allTimeByItem, firstDate } = totalsForItemAllTime();
 
-      const wrap = document.getElementById("items");
-      wrap.innerHTML = "";
+  document.getElementById("todayTotal").textContent = `Today: ${fmt(total)}`;
 
-      for (const it of items.filter(x => !x.archived)) {
-        const row = document.createElement("div");
-        row.className = "row";
+  const wrap = document.getElementById("items");
+  wrap.innerHTML = "";
 
-        const isRunning = running && running.itemId === it.id;
-        if (isRunning) row.classList.add("running");
+  for (const it of items.filter(x => !x.archived)) {
+    const row = document.createElement("div");
+    row.className = "row";
 
-        const left = document.createElement("div");
-        left.className = "name";
-        left.textContent = it.name;
-        left.onclick = (ev) => {
-          ev.stopPropagation();
-          toggleTimerForItem(it.id);
-        };
+    const isRunning = running && running.itemId === it.id;
+    if (isRunning) row.classList.add("running");
 
-        const timeEl = document.createElement("div");
-        timeEl.className = "time";
-        timeEl.textContent = fmt(byItem.get(it.id) || 0);
+    const left = document.createElement("div");
+    left.style.display = "flex";
+    left.style.flexDirection = "column";
+    left.style.gap = "4px";
 
-        const rightWrap = document.createElement("div");
-        rightWrap.className = "rightWrap";
+    const nameEl = document.createElement("div");
+    nameEl.className = "name";
+    nameEl.textContent = it.name;
+    nameEl.onclick = (ev) => {
+      ev.stopPropagation();
+      toggleTimerForItem(it.id);
+    };
 
-        const addTimeBtn = document.createElement("button");
-        addTimeBtn.type = "button";
-        addTimeBtn.textContent = "+ Add time";
-        addTimeBtn.onclick = async (ev) => {
-          ev.stopPropagation();
-          const mins = document.getElementById("manualMinutes").value.trim();
-          await addManualTime(it.id, mins);
-        };
+    const totalEl = document.createElement("div");
+    totalEl.className = "time";
+    const startDate = firstDate.get(it.id);
+    const totalSecs = allTimeByItem.get(it.id) || 0;
+    totalEl.textContent = startDate
+      ? `Total since ${startDate}: ${fmt(totalSecs)}`
+      : `Total: 00:00:00`;
 
-        const editBtn = document.createElement("button");
-        editBtn.type = "button";
-        editBtn.textContent = "Edit";
-        editBtn.onclick = async (ev) => {
-          ev.stopPropagation();
-          await editFromItemRow(it.id);
-        };
+    left.appendChild(nameEl);
+    left.appendChild(totalEl);
 
-        rightWrap.appendChild(timeEl);
-        rightWrap.appendChild(addTimeBtn);
-        rightWrap.appendChild(editBtn);
+    const timeEl = document.createElement("div");
+    timeEl.className = "time";
+    timeEl.textContent = fmt(byItem.get(it.id) || 0);
 
-        row.appendChild(left);
-        row.appendChild(rightWrap);
-        wrap.appendChild(row);
-      }
-    }
+    const rightWrap = document.createElement("div");
+    rightWrap.className = "rightWrap";
+
+    const addTimeBtn = document.createElement("button");
+    addTimeBtn.type = "button";
+    addTimeBtn.textContent = "+ Add time";
+    addTimeBtn.onclick = async (ev) => {
+      ev.stopPropagation();
+      const mins = document.getElementById("manualMinutes").value.trim();
+      await addManualTime(it.id, mins);
+    };
+
+    const editBtn = document.createElement("button");
+    editBtn.type = "button";
+    editBtn.textContent = "Edit";
+    editBtn.onclick = async (ev) => {
+      ev.stopPropagation();
+      await editFromItemRow(it.id);
+    };
+
+    rightWrap.appendChild(timeEl);   // today's total
+    rightWrap.appendChild(addTimeBtn);
+    rightWrap.appendChild(editBtn);
+
+    row.appendChild(left);
+    row.appendChild(rightWrap);
+    wrap.appendChild(row);
+  }
+}
 
     function renderHistory() {
       const hist = document.getElementById("history");
