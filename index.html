@@ -363,6 +363,19 @@
       return { byItem, firstDate };
     }
 
+    function daysBetweenDateKeysInclusive(startKey, endKey) {
+  const start = new Date(`${startKey}T00:00:00`);
+  const end = new Date(`${endKey}T00:00:00`);
+  const diffMs = end - start;
+  const diffDays = Math.floor(diffMs / 86400000);
+  return Math.max(1, diffDays + 1);
+}
+
+function fmtHoursPerDay(secsPerDay) {
+  const hours = secsPerDay / 3600;
+  return `${hours.toFixed(2)} h/day`;
+}
+
     function latestSessionForItemOnDate(itemId, dKey) {
       const list = sessions
         .filter(s => s.itemId === itemId && s.dateKey === dKey)
@@ -671,59 +684,84 @@
       }
     }
 
-    function renderTotals() {
-      const totalsEl = document.getElementById("totals");
-      const { byItem, firstDate } = totalsForItemAllTime();
+function renderTotals() {
+  const totalsEl = document.getElementById("totals");
+  const { byItem, firstDate } = totalsForItemAllTime();
+  const today = todayKey();
 
-      const rows = items
-        .filter(x => !x.archived)
-        .map(it => ({
-          item: it,
-          totalSec: byItem.get(it.id) || 0,
-          firstDate: firstDate.get(it.id) || null
-        }))
-        .sort((a, b) => b.totalSec - a.totalSec);
+  const rows = items
+    .filter(x => !x.archived)
+    .map(it => {
+      const totalSec = byItem.get(it.id) || 0;
+      const startDate = firstDate.get(it.id) || null;
+      const days = startDate ? daysBetweenDateKeysInclusive(startDate, today) : 0;
+      const avgSecPerDay = days > 0 ? totalSec / days : 0;
 
-      const grandTotal = rows.reduce((sum, r) => sum + r.totalSec, 0);
+      return {
+        item: it,
+        totalSec,
+        firstDate: startDate,
+        days,
+        avgSecPerDay
+      };
+    })
+    .sort((a, b) => b.totalSec - a.totalSec);
 
-      totalsEl.innerHTML = `<h2>Totals</h2><div class="total">All time: ${fmt(grandTotal)}</div>`;
+  const grandTotal = rows.reduce((sum, r) => sum + r.totalSec, 0);
 
-      if (rows.length === 0) {
-        totalsEl.innerHTML += "<p>No items yet.</p>";
-        return;
-      }
+  totalsEl.innerHTML = `<h2>Totals</h2><div class="total">All time: ${fmt(grandTotal)}</div>`;
 
-      for (const rowData of rows) {
-        const row = document.createElement("div");
-        row.className = "row";
+  if (rows.length === 0) {
+    totalsEl.innerHTML += "<p>No items yet.</p>";
+    return;
+  }
 
-        const leftWrap = document.createElement("div");
-        leftWrap.style.display = "flex";
-        leftWrap.style.flexDirection = "column";
-        leftWrap.style.gap = "4px";
+  for (const rowData of rows) {
+    const row = document.createElement("div");
+    row.className = "row";
 
-        const nameEl = document.createElement("div");
-        nameEl.className = "name";
-        nameEl.textContent = rowData.item.name;
+    const leftWrap = document.createElement("div");
+    leftWrap.style.display = "flex";
+    leftWrap.style.flexDirection = "column";
+    leftWrap.style.gap = "4px";
 
-        const subEl = document.createElement("div");
-        subEl.className = "subtle";
-        subEl.textContent = rowData.firstDate
-          ? `Since ${rowData.firstDate}`
-          : "No sessions yet";
+    const nameEl = document.createElement("div");
+    nameEl.className = "name";
+    nameEl.textContent = rowData.item.name;
 
-        const rightEl = document.createElement("div");
-        rightEl.className = "time";
-        rightEl.textContent = fmt(rowData.totalSec);
+    const subEl = document.createElement("div");
+    subEl.className = "subtle";
+    subEl.textContent = rowData.firstDate
+      ? `Since ${rowData.firstDate} • Avg ${fmtHoursPerDay(rowData.avgSecPerDay)}`
+      : "No sessions yet";
 
-        leftWrap.appendChild(nameEl);
-        leftWrap.appendChild(subEl);
+    const rightWrap = document.createElement("div");
+    rightWrap.style.display = "flex";
+    rightWrap.style.flexDirection = "column";
+    rightWrap.style.alignItems = "flex-end";
+    rightWrap.style.gap = "4px";
 
-        row.appendChild(leftWrap);
-        row.appendChild(rightEl);
-        totalsEl.appendChild(row);
-      }
-    }
+    const totalEl = document.createElement("div");
+    totalEl.className = "time";
+    totalEl.textContent = fmt(rowData.totalSec);
+
+    const avgEl = document.createElement("div");
+    avgEl.className = "subtle";
+    avgEl.textContent = rowData.days > 0
+      ? `${rowData.days} day${rowData.days === 1 ? "" : "s"}`
+      : "";
+
+    rightWrap.appendChild(totalEl);
+    rightWrap.appendChild(avgEl);
+
+    leftWrap.appendChild(nameEl);
+    leftWrap.appendChild(subEl);
+
+    row.appendChild(leftWrap);
+    row.appendChild(rightWrap);
+    totalsEl.appendChild(row);
+  }
+}
 
     function render() {
       const isHistory = location.hash === "#history";
