@@ -57,7 +57,7 @@
   <div class="controls">
     <input id="newItemName" placeholder="Add item (e.g., Arpeggios)" />
     <button id="addBtn" type="button">Add</button>
-    <input id="manualMinutes" inputmode="decimal" placeholder="Minutes to add/edit (e.g., 30)" />
+    <input id="manualMinutes" inputmode="decimal" placeholder="Minutes to add manually (e.g., 30)" />
   </div>
 
   <div id="items"></div>
@@ -86,32 +86,32 @@
     const setStatus = (msg) => { statusEl.textContent = msg || ""; };
 
     const pad = (n) => String(n).padStart(2, "0");
+
     const fmt = (secs) => {
-      secs = Math.max(0, Math.floor(secs || 0));
+      secs = Math.max(0, Math.floor(Number(secs) || 0));
       const h = Math.floor(secs / 3600);
       const m = Math.floor((secs % 3600) / 60);
       const s = secs % 60;
       return `${pad(h)}:${pad(m)}:${pad(s)}`;
     };
 
-    // London local YYYY-MM-DD (important: avoids UTC "wrong day" issues)
     const LONDON_TZ = "Europe/London";
-   const londonDateKey = (tsMs) => {
-  const parts = new Intl.DateTimeFormat("en-GB", {
-    timeZone: LONDON_TZ,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).formatToParts(new Date(tsMs));
 
-  const get = (type) => parts.find(p => p.type === type).value;
-  return `${get("year")}-${get("month")}-${get("day")}`;
-};
+    const londonDateKey = (tsMs) => {
+      const parts = new Intl.DateTimeFormat("en-GB", {
+        timeZone: LONDON_TZ,
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+      }).formatToParts(new Date(tsMs));
+
+      const get = (type) => parts.find(p => p.type === type).value;
+      return `${get("year")}-${get("month")}-${get("day")}`;
+    };
 
     const todayKey = () => londonDateKey(Date.now());
     const dateKeyForTs = (tsMs) => londonDateKey(tsMs);
-
-    const parseDateKey = (d) => String(d);
+    const parseDateKey = (d) => String(d).slice(0, 10);
 
     function minutesToSeconds(mins) {
       const n = Number(String(mins).replace(",", "."));
@@ -119,16 +119,28 @@
       return Math.round(n * 60);
     }
 
+    function daysBetweenDateKeysInclusive(startKey, endKey) {
+      const start = new Date(`${startKey}T00:00:00`);
+      const end = new Date(`${endKey}T00:00:00`);
+      const diffMs = end - start;
+      const diffDays = Math.floor(diffMs / 86400000);
+      return Math.max(1, diffDays + 1);
+    }
+
+    function fmtHoursPerDay(secsPerDay) {
+      const hours = secsPerDay / 3600;
+      return `${hours.toFixed(2)} h/day`;
+    }
+
     // =============================
     // 3) IN-MEMORY STATE
     // =============================
     let currentUserId = null;
 
-    let items = [];      // { id, name, archived, createdAt }
-    let sessions = [];   // { id, itemId, startTs, endTs, durationSec, dateKey }
-    let running = null;  // { itemId, startTs } or null
+    let items = [];        // { id, name, archived, createdAt }
+    let dailyTotals = [];  // { userId, itemId, dateKey, totalSec }
+    let running = null;    // { itemId, startTs } or null
 
-    // History view selection
     let historySelectedDate = null;
 
     // =============================
@@ -149,9 +161,13 @@
       try {
         const email = emailInput.value.trim();
         if (!email) return alert("Enter your email.");
+
         setStatus("Sending code...");
+
         const { error } = await sb.auth.signInWithOtp({ email });
+
         if (error) return alert(error.message);
+
         setStatus("Code sent. Check your email.");
       } catch (e) {
         alert(e?.message || String(e));
@@ -162,10 +178,19 @@
       try {
         const email = emailInput.value.trim();
         const token = otpInput.value.trim();
+
         if (!email || !token) return alert("Enter email and code.");
+
         setStatus("Verifying...");
-        const { error } = await sb.auth.verifyOtp({ email, token, type: "email" });
+
+        const { error } = await sb.auth.verifyOtp({
+          email,
+          token,
+          type: "email"
+        });
+
         if (error) return alert(error.message);
+
         setStatus("Logged in.");
         await bootstrapAfterLogin();
       } catch (e) {
@@ -175,11 +200,13 @@
 
     signOutBtn.onclick = async () => {
       await sb.auth.signOut();
+
       currentUserId = null;
       items = [];
-      sessions = [];
+      dailyTotals = [];
       running = null;
       historySelectedDate = null;
+
       setStatus("Signed out.");
       showAuthBox(true);
       render();
@@ -195,11 +222,13 @@
     // =============================
     async function loadFromCloud() {
       if (!currentUserId) return;
+
       setStatus("Loading from cloud...");
 
       const { data: itemsData, error: itemsErr } = await sb
         .from("practice_items")
-        .select("item_id, duration_seconds")
+        .select("*")
+        .eq("user_id", currentUserId)
         .order("created_at", { ascending: true });
 
       if (itemsErr) throw itemsErr;
@@ -207,32 +236,53 @@
       items = (itemsData || []).map(r => ({
         id: r.id,
         name: r.name,
-        archived: r.archived,
+        archived: !!r.archived,
         createdAt: new Date(r.created_at).getTime()
       }));
 
-      const { data: sessionsData, error: sessionsErr } = await sb
-        .from("practice_sessions")
-       .select("item_id, duration_seconds")
+      const { data: totalsData, error: totalsErr } = await sb
+        .from("practice_daily_totals")
+        .select("*")
+        .eq("user_id", currentUserId)
+        .order("date_key", { ascending: false });
 
-      if (sessionsErr) throw sessionsErr;
+      if (totalsErr) throw totalsErr;
 
-      sessions = (sessionsData || []).map(r => ({
-        id: r.id,
+      dailyTotals = (totalsData || []).map(r => ({
+        userId: r.user_id,
         itemId: r.item_id,
-        startTs: new Date(r.start_time).getTime(),
-        endTs: new Date(r.end_time).getTime(),
-        durationSec: r.duration_seconds,
-        dateKey: parseDateKey(r.date_key)
+        dateKey: parseDateKey(r.date_key),
+        totalSec: Number(r.total_seconds || 0)
       }));
 
       setStatus("");
     }
 
+    function addToLocalDailyTotals(itemId, dateKey, durationSec) {
+      const existing = dailyTotals.find(
+        r => r.itemId === itemId && r.dateKey === dateKey
+      );
+
+      if (existing) {
+        existing.totalSec += durationSec;
+      } else {
+        dailyTotals.push({
+          userId: currentUserId,
+          itemId,
+          dateKey,
+          totalSec: durationSec
+        });
+      }
+    }
+
     async function addItemToCloud(name) {
       const { data, error } = await sb
         .from("practice_items")
-        .insert({ user_id: currentUserId, name, archived: false })
+        .insert({
+          user_id: currentUserId,
+          name,
+          archived: false
+        })
         .select()
         .single();
 
@@ -241,7 +291,7 @@
       items.push({
         id: data.id,
         name: data.name,
-        archived: data.archived,
+        archived: !!data.archived,
         createdAt: new Date(data.created_at).getTime()
       });
     }
@@ -262,76 +312,34 @@
 
       if (error) throw error;
 
-      sessions.push({
-        id: data.id,
-        itemId: data.item_id,
-        startTs: new Date(data.start_time).getTime(),
-        endTs: new Date(data.end_time).getTime(),
-        durationSec: data.duration_seconds,
-        dateKey: parseDateKey(data.date_key)
-      });
-    }
+      addToLocalDailyTotals(itemId, dateKey, durationSec);
 
-    async function deleteSessionFromCloud(sessionId) {
-      if (!currentUserId) return alert("Please log in first.");
-
-      const { error } = await sb
-        .from("practice_sessions")
-        .delete()
-        .eq("id", sessionId)
-        .eq("user_id", currentUserId);
-
-      if (error) throw error;
-
-      sessions = sessions.filter(s => s.id !== sessionId);
-    }
-
-    async function updateSessionInCloud(sessionId, newDurationSec, newStartTs, newEndTs, newDateKey) {
-      const { data, error } = await sb
-        .from("practice_sessions")
-        .update({
-          duration_seconds: newDurationSec,
-          start_time: new Date(newStartTs).toISOString(),
-          end_time: new Date(newEndTs).toISOString(),
-          date_key: newDateKey
-        })
-        .eq("id", sessionId)
-        .eq("user_id", currentUserId)
-        .select()
-        .single();
-
-      if (error) throw error;
-
-      const idx = sessions.findIndex(s => s.id === sessionId);
-      if (idx >= 0) {
-        sessions[idx] = {
-          id: data.id,
-          itemId: data.item_id,
-          startTs: new Date(data.start_time).getTime(),
-          endTs: new Date(data.end_time).getTime(),
-          durationSec: data.duration_seconds,
-          dateKey: parseDateKey(data.date_key)
-        };
-      }
+      return data;
     }
 
     // =============================
-    // 6) TOTALS + EDIT/ADD HELPERS
+    // 6) TOTALS
     // =============================
     function totalsForDate(dateKey) {
-      const daySessions = sessions.filter(s => s.dateKey === dateKey);
       const byItem = new Map();
       let total = 0;
 
-      for (const s of daySessions) {
-        total += (s.durationSec || 0);
-        byItem.set(s.itemId, (byItem.get(s.itemId) || 0) + (s.durationSec || 0));
+      for (const row of dailyTotals) {
+        if (row.dateKey !== dateKey) continue;
+
+        const secs = Number(row.totalSec || 0);
+
+        total += secs;
+        byItem.set(row.itemId, (byItem.get(row.itemId) || 0) + secs);
       }
 
       if (running && dateKey === todayKey()) {
         const runningSecs = Math.floor((Date.now() - running.startTs) / 1000);
         total += runningSecs;
-        byItem.set(running.itemId, (byItem.get(running.itemId) || 0) + runningSecs);
+        byItem.set(
+          running.itemId,
+          (byItem.get(running.itemId) || 0) + runningSecs
+        );
       }
 
       return { total, byItem };
@@ -341,21 +349,26 @@
       const byItem = new Map();
       const firstDate = new Map();
 
-      for (const s of sessions) {
-        const secs = s.durationSec || 0;
-        byItem.set(s.itemId, (byItem.get(s.itemId) || 0) + secs);
+      for (const row of dailyTotals) {
+        const secs = Number(row.totalSec || 0);
 
-        const existing = firstDate.get(s.itemId);
-        if (!existing || s.dateKey < existing) {
-          firstDate.set(s.itemId, s.dateKey);
+        byItem.set(row.itemId, (byItem.get(row.itemId) || 0) + secs);
+
+        const existing = firstDate.get(row.itemId);
+        if (!existing || row.dateKey < existing) {
+          firstDate.set(row.itemId, row.dateKey);
         }
       }
 
       if (running) {
         const runningSecs = Math.floor((Date.now() - running.startTs) / 1000);
-        byItem.set(running.itemId, (byItem.get(running.itemId) || 0) + runningSecs);
-
         const runningDate = dateKeyForTs(running.startTs);
+
+        byItem.set(
+          running.itemId,
+          (byItem.get(running.itemId) || 0) + runningSecs
+        );
+
         const existing = firstDate.get(running.itemId);
         if (!existing || runningDate < existing) {
           firstDate.set(running.itemId, runningDate);
@@ -365,32 +378,16 @@
       return { byItem, firstDate };
     }
 
-    function daysBetweenDateKeysInclusive(startKey, endKey) {
-  const start = new Date(`${startKey}T00:00:00`);
-  const end = new Date(`${endKey}T00:00:00`);
-  const diffMs = end - start;
-  const diffDays = Math.floor(diffMs / 86400000);
-  return Math.max(1, diffDays + 1);
-}
-
-function fmtHoursPerDay(secsPerDay) {
-  const hours = secsPerDay / 3600;
-  return `${hours.toFixed(2)} h/day`;
-}
-
-    function latestSessionForItemOnDate(itemId, dKey) {
-      const list = sessions
-        .filter(s => s.itemId === itemId && s.dateKey === dKey)
-        .slice()
-        .sort((a, b) => b.endTs - a.endTs);
-      return list[0] || null;
-    }
-
+    // =============================
+    // 7) ADD TIME / TIMER
+    // =============================
     async function addManualTime(itemId, minutes) {
       if (!currentUserId) return alert("Please log in first.");
 
       const durationSec = minutesToSeconds(minutes);
-      if (durationSec === null) return alert("Enter a valid number of minutes (e.g., 30).");
+      if (durationSec === null) {
+        return alert("Enter a valid number of minutes, e.g. 30.");
+      }
 
       const endTs = Date.now();
       const startTs = endTs - durationSec * 1000;
@@ -407,74 +404,6 @@ function fmtHoursPerDay(secsPerDay) {
       }
     }
 
-    async function editSessionDuration(sessionId, minutes) {
-      const durationSec = minutesToSeconds(minutes);
-      if (durationSec === null) return alert("Enter a valid number of minutes (e.g., 30).");
-
-      const s = sessions.find(x => x.id === sessionId);
-      if (!s) return alert("Session not found.");
-
-      const newEndTs = s.endTs;
-      const newStartTs = newEndTs - durationSec * 1000;
-      const newDateKey = dateKeyForTs(newEndTs);
-
-      try {
-        setStatus("Updating session...");
-        await updateSessionInCloud(sessionId, durationSec, newStartTs, newEndTs, newDateKey);
-        setStatus("");
-        render();
-      } catch (e) {
-        setStatus("");
-        alert(e?.message || String(e));
-      }
-    }
-
-    async function editFromItemRow(itemId) {
-      if (!currentUserId) return alert("Please log in first.");
-
-      const minsInput = document.getElementById("manualMinutes").value.trim();
-
-      if (running && running.itemId === itemId) {
-        const durationSec = minutesToSeconds(minsInput);
-        if (durationSec === null) return alert("Enter a valid number of minutes (e.g., 30).");
-
-        const endTs = Date.now();
-        const startTs = endTs - durationSec * 1000;
-        const dKey = dateKeyForTs(endTs);
-
-        running = null;
-        render();
-
-        try {
-          setStatus("Saving edited (forced-stop) session...");
-          await saveSessionToCloud(itemId, startTs, endTs, durationSec, dKey);
-          setStatus("");
-          render();
-        } catch (e) {
-          setStatus("");
-          alert(e?.message || String(e));
-        }
-        return;
-      }
-
-      const dKey = todayKey();
-      const latest = latestSessionForItemOnDate(itemId, dKey);
-      if (!latest) return alert("No session for this item today to edit.");
-
-      let mins = minsInput;
-      if (!mins) {
-        const currentMins = (latest.durationSec / 60).toFixed(2).replace(/\.00$/, "");
-        mins = prompt("Set session duration (minutes):", currentMins);
-        if (mins === null) return;
-        mins = mins.trim();
-      }
-
-      await editSessionDuration(latest.id, mins);
-    }
-
-    // =============================
-    // 7) TIMER TOGGLE
-    // =============================
     async function toggleTimerForItem(itemId) {
       if (!currentUserId) return alert("Please log in first.");
 
@@ -502,6 +431,7 @@ function fmtHoursPerDay(secsPerDay) {
           setStatus("");
           alert(e?.message || String(e));
         }
+
         return;
       }
 
@@ -531,6 +461,7 @@ function fmtHoursPerDay(secsPerDay) {
     function renderHome() {
       const date = todayKey();
       const { total, byItem } = totalsForDate(date);
+
       document.getElementById("todayTotal").textContent = `Today: ${fmt(total)}`;
 
       const wrap = document.getElementById("items");
@@ -567,17 +498,8 @@ function fmtHoursPerDay(secsPerDay) {
           await addManualTime(it.id, mins);
         };
 
-        const editBtn = document.createElement("button");
-        editBtn.type = "button";
-        editBtn.textContent = "Edit";
-        editBtn.onclick = async (ev) => {
-          ev.stopPropagation();
-          await editFromItemRow(it.id);
-        };
-
         rightWrap.appendChild(timeEl);
         rightWrap.appendChild(addTimeBtn);
-        rightWrap.appendChild(editBtn);
 
         row.appendChild(left);
         row.appendChild(rightWrap);
@@ -589,13 +511,18 @@ function fmtHoursPerDay(secsPerDay) {
       const hist = document.getElementById("history");
       hist.innerHTML = "<h2>History</h2>";
 
-      const dates = Array.from(new Set(sessions.map(s => s.dateKey))).sort().reverse();
+      const dates = Array.from(new Set(dailyTotals.map(r => r.dateKey)))
+        .sort()
+        .reverse();
+
       if (dates.length === 0) {
         hist.innerHTML += "<p>No sessions yet.</p>";
         return;
       }
 
-      if (!historySelectedDate) historySelectedDate = dates[0];
+      if (!historySelectedDate || !dates.includes(historySelectedDate)) {
+        historySelectedDate = dates[0];
+      }
 
       for (const d of dates) {
         const { total } = totalsForDate(d);
@@ -624,24 +551,17 @@ function fmtHoursPerDay(secsPerDay) {
       }
 
       const h3 = document.createElement("h3");
-      h3.textContent = `Sessions for ${historySelectedDate}`;
+      h3.textContent = `Totals for ${historySelectedDate}`;
       h3.style.marginTop = "16px";
       hist.appendChild(h3);
 
-      const daySessions = sessions
-        .filter(s => s.dateKey === historySelectedDate)
+      const rows = dailyTotals
+        .filter(r => r.dateKey === historySelectedDate)
         .slice()
-        .sort((a, b) => b.endTs - a.endTs);
+        .sort((a, b) => b.totalSec - a.totalSec);
 
-      if (daySessions.length === 0) {
-        const p = document.createElement("p");
-        p.textContent = "No sessions for this day.";
-        hist.appendChild(p);
-        return;
-      }
-
-      for (const s of daySessions) {
-        const it = items.find(x => x.id === s.itemId);
+      for (const r of rows) {
+        const it = items.find(x => x.id === r.itemId);
         const itemName = it ? it.name : "(Unknown item)";
 
         const row = document.createElement("div");
@@ -651,119 +571,96 @@ function fmtHoursPerDay(secsPerDay) {
         left.className = "name";
         left.textContent = itemName;
 
-        const rightWrap = document.createElement("div");
-        rightWrap.className = "rightWrap";
-
-        const timeEl = document.createElement("div");
-        timeEl.className = "time";
-        timeEl.textContent = fmt(s.durationSec || 0);
-
-        const delBtn = document.createElement("button");
-        delBtn.type = "button";
-        delBtn.textContent = "Delete";
-        delBtn.onclick = async (ev) => {
-          ev.stopPropagation();
-          if (!confirm(`Delete this session?\n\n${itemName} — ${fmt(s.durationSec || 0)}`)) return;
-
-          try {
-            setStatus("Deleting session...");
-            await deleteSessionFromCloud(s.id);
-            setStatus("");
-            render();
-          } catch (e) {
-            setStatus("");
-            alert(e?.message || String(e));
-          }
-        };
-
-        rightWrap.appendChild(timeEl);
-        rightWrap.appendChild(delBtn);
+        const right = document.createElement("div");
+        right.className = "time";
+        right.textContent = fmt(r.totalSec || 0);
 
         row.appendChild(left);
-        row.appendChild(rightWrap);
+        row.appendChild(right);
 
         hist.appendChild(row);
       }
     }
 
-function renderTotals() {
-  const totalsEl = document.getElementById("totals");
-  const { byItem, firstDate } = totalsForItemAllTime();
-  const today = todayKey();
+    function renderTotals() {
+      const totalsEl = document.getElementById("totals");
+      const { byItem, firstDate } = totalsForItemAllTime();
+      const today = todayKey();
 
-  const rows = items
-    .filter(x => !x.archived)
-    .map(it => {
-      const totalSec = byItem.get(it.id) || 0;
-      const startDate = firstDate.get(it.id) || null;
-      const days = startDate ? daysBetweenDateKeysInclusive(startDate, today) : 0;
-      const avgSecPerDay = days > 0 ? totalSec / days : 0;
+      const rows = items
+        .filter(x => !x.archived)
+        .map(it => {
+          const totalSec = byItem.get(it.id) || 0;
+          const startDate = firstDate.get(it.id) || null;
+          const days = startDate ? daysBetweenDateKeysInclusive(startDate, today) : 0;
+          const avgSecPerDay = days > 0 ? totalSec / days : 0;
 
-      return {
-        item: it,
-        totalSec,
-        firstDate: startDate,
-        days,
-        avgSecPerDay
-      };
-    })
-    .sort((a, b) => b.totalSec - a.totalSec);
+          return {
+            item: it,
+            totalSec,
+            firstDate: startDate,
+            days,
+            avgSecPerDay
+          };
+        })
+        .sort((a, b) => b.totalSec - a.totalSec);
 
-  const grandTotal = rows.reduce((sum, r) => sum + r.totalSec, 0);
+      const grandTotal = rows.reduce((sum, r) => sum + r.totalSec, 0);
 
-  totalsEl.innerHTML = `<h2>Totals</h2><div class="total">All time: ${fmt(grandTotal)}</div>`;
+      totalsEl.innerHTML = `<h2>Totals</h2><div class="total">All time: ${fmt(grandTotal)}</div>`;
 
-  if (rows.length === 0) {
-    totalsEl.innerHTML += "<p>No items yet.</p>";
-    return;
-  }
+      if (rows.length === 0) {
+        totalsEl.innerHTML += "<p>No items yet.</p>";
+        return;
+      }
 
-  for (const rowData of rows) {
-    const row = document.createElement("div");
-    row.className = "row";
+      for (const rowData of rows) {
+        const row = document.createElement("div");
+        row.className = "row";
 
-    const leftWrap = document.createElement("div");
-    leftWrap.style.display = "flex";
-    leftWrap.style.flexDirection = "column";
-    leftWrap.style.gap = "4px";
+        const leftWrap = document.createElement("div");
+        leftWrap.style.display = "flex";
+        leftWrap.style.flexDirection = "column";
+        leftWrap.style.gap = "4px";
 
-    const nameEl = document.createElement("div");
-    nameEl.className = "name";
-    nameEl.textContent = rowData.item.name;
+        const nameEl = document.createElement("div");
+        nameEl.className = "name";
+        nameEl.textContent = rowData.item.name;
 
-    const subEl = document.createElement("div");
-    subEl.className = "subtle";
-    subEl.textContent = rowData.firstDate
-      ? `Since ${rowData.firstDate} • Avg ${fmtHoursPerDay(rowData.avgSecPerDay)}`
-      : "No sessions yet";
+        const subEl = document.createElement("div");
+        subEl.className = "subtle";
+        subEl.textContent = rowData.firstDate
+          ? `Since ${rowData.firstDate} • Avg ${fmtHoursPerDay(rowData.avgSecPerDay)}`
+          : "No sessions yet";
 
-    const rightWrap = document.createElement("div");
-    rightWrap.style.display = "flex";
-    rightWrap.style.flexDirection = "column";
-    rightWrap.style.alignItems = "flex-end";
-    rightWrap.style.gap = "4px";
+        const rightWrap = document.createElement("div");
+        rightWrap.style.display = "flex";
+        rightWrap.style.flexDirection = "column";
+        rightWrap.style.alignItems = "flex-end";
+        rightWrap.style.gap = "4px";
 
-    const totalEl = document.createElement("div");
-    totalEl.className = "time";
-    totalEl.textContent = fmt(rowData.totalSec);
+        const totalEl = document.createElement("div");
+        totalEl.className = "time";
+        totalEl.textContent = fmt(rowData.totalSec);
 
-    const avgEl = document.createElement("div");
-    avgEl.className = "subtle";
-    avgEl.textContent = rowData.days > 0
-      ? `${rowData.days} day${rowData.days === 1 ? "" : "s"}`
-      : "";
+        const avgEl = document.createElement("div");
+        avgEl.className = "subtle";
+        avgEl.textContent = rowData.days > 0
+          ? `${rowData.days} day${rowData.days === 1 ? "" : "s"}`
+          : "";
 
-    rightWrap.appendChild(totalEl);
-    rightWrap.appendChild(avgEl);
+        rightWrap.appendChild(totalEl);
+        rightWrap.appendChild(avgEl);
 
-    leftWrap.appendChild(nameEl);
-    leftWrap.appendChild(subEl);
+        leftWrap.appendChild(nameEl);
+        leftWrap.appendChild(subEl);
 
-    row.appendChild(leftWrap);
-    row.appendChild(rightWrap);
-    totalsEl.appendChild(row);
-  }
-}
+        row.appendChild(leftWrap);
+        row.appendChild(rightWrap);
+
+        totalsEl.appendChild(row);
+      }
+    }
 
     function render() {
       const isHistory = location.hash === "#history";
@@ -787,8 +684,10 @@ function renderTotals() {
     document.getElementById("addBtn").onclick = async () => {
       try {
         if (!currentUserId) return alert("Please log in first.");
+
         const input = document.getElementById("newItemName");
         const name = input.value.trim();
+
         if (!name) return;
 
         setStatus("Saving item...");
@@ -806,6 +705,7 @@ function renderTotals() {
     document.getElementById("manualMinutes").addEventListener("keydown", async (e) => {
       if (e.key !== "Enter") return;
       if (!running) return;
+
       const mins = e.target.value.trim();
       await addManualTime(running.itemId, mins);
     });
@@ -821,10 +721,12 @@ function renderTotals() {
 
     async function bootstrapAfterLogin() {
       currentUserId = await getSessionUserId();
+
       if (!currentUserId) {
         showAuthBox(true);
         return;
       }
+
       showAuthBox(false);
       await loadFromCloud();
       render();
@@ -832,12 +734,14 @@ function renderTotals() {
 
     (async () => {
       currentUserId = await getSessionUserId();
+
       if (!currentUserId) {
         showAuthBox(true);
         setStatus("Please log in.");
         render();
         return;
       }
+
       showAuthBox(false);
       await loadFromCloud();
       render();
