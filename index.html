@@ -1,250 +1,847 @@
-<script>
-  const supabaseUrl = "https://pkzwwhaqnpxmzqwzcitl.supabase.co";
-  const supabaseAnonKey = "sb_publishable_UPhipxgZU5lbyY3gAECheQ_xk1kdLjp";
-  const sb = supabase.createClient(supabaseUrl, supabaseAnonKey);
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>2026 Timer</title>
+  <style>
+    body { font-family: -apple-system, system-ui, Arial; margin: 16px; }
+    h1 { margin: 0 0 8px 0; font-size: 22px; }
+    .total { font-size: 28px; margin: 8px 0 16px 0; }
+    .row {
+      display: flex; justify-content: space-between; align-items: center;
+      padding: 12px 10px; border: 1px solid #ddd; border-radius: 10px; margin-bottom: 10px;
+    }
+    .name { font-size: 18px; cursor: pointer; user-select: none; }
+    .time { font-variant-numeric: tabular-nums; opacity: 0.8; }
+    .running { border-color: #000; }
+    .controls { display:flex; gap:8px; margin: 12px 0; flex-wrap: wrap; }
+    button { padding: 10px 12px; border-radius: 10px; border: 1px solid #ccc; background: #fff; cursor:pointer; }
+    input { padding: 10px 12px; border-radius: 10px; border: 1px solid #ccc; width: 100%; }
+    input, textarea, select { font-size: 16px; }
+    a { display:inline-block; margin-top: 12px; }
+    #authBox { margin: 12px 0; padding: 12px; border: 1px solid #ddd; border-radius: 10px; display:none; }
+    #authRow { display:flex; gap:8px; margin-top: 8px; flex-wrap: wrap; }
+    #status { margin: 10px 0; opacity: 0.85; }
+    .rightWrap { display:flex; align-items:center; gap:8px; flex-wrap: wrap; }
+    .controls > * { flex: 1 1 180px; }
+    .controls button { flex: 0 0 auto; }
+    .navLinks { display:flex; gap:12px; margin-top:12px; flex-wrap:wrap; }
+    .subtle { opacity: 0.75; font-size: 14px; margin-top: 4px; }
+  </style>
+</head>
 
-  const statusEl = document.getElementById("status");
-  const setStatus = (msg) => { statusEl.textContent = msg || ""; };
+<body>
+  <h1>2026 Timer</h1>
 
-  const pad = (n) => String(n).padStart(2, "0");
+  <div id="status"></div>
 
-  const fmt = (secs) => {
-    secs = Math.max(0, Math.floor(secs || 0));
-    const h = Math.floor(secs / 3600);
-    const m = Math.floor((secs % 3600) / 60);
-    const s = secs % 60;
-    return `${pad(h)}:${pad(m)}:${pad(s)}`;
-  };
+  <div id="authBox">
+    <div>
+      <input id="email" placeholder="Email for login" autocomplete="email" />
+    </div>
+    <div id="authRow">
+      <button id="sendCodeBtn" type="button">Send code</button>
+    </div>
+    <div style="margin-top:8px;">
+      <input id="otp" placeholder="Enter code from email" inputmode="numeric" autocomplete="one-time-code" />
+    </div>
+    <div id="authRow">
+      <button id="verifyBtn" type="button">Verify</button>
+      <button id="signOutBtn" type="button">Sign out</button>
+    </div>
+  </div>
 
-  const LONDON_TZ = "Europe/London";
+  <div class="total" id="todayTotal">Today: 00:00:00</div>
 
-  const londonDateKey = (tsMs) => {
-    const parts = new Intl.DateTimeFormat("en-GB", {
-      timeZone: LONDON_TZ,
-      year: "numeric",
-      month: "2-digit",
-      day: "2-digit",
-    }).formatToParts(new Date(tsMs));
+  <div class="controls">
+    <input id="newItemName" placeholder="Add item (e.g., Arpeggios)" />
+    <button id="addBtn" type="button">Add</button>
+    <input id="manualMinutes" inputmode="decimal" placeholder="Minutes to add/edit (e.g., 30)" />
+  </div>
 
-    const get = (type) => parts.find(p => p.type === type).value;
-    return `${get("year")}-${get("month")}-${get("day")}`;
-  };
+  <div id="items"></div>
 
-  const todayKey = () => londonDateKey(Date.now());
-  const dateKeyForTs = (tsMs) => londonDateKey(tsMs);
-  const parseDateKey = (d) => String(d).slice(0, 10);
+  <div class="navLinks">
+    <a href="#history" id="historyLink">History</a>
+    <a href="#totals" id="totalsLink">Totals</a>
+  </div>
 
-  function minutesToSeconds(mins) {
-    const n = Number(String(mins).replace(",", "."));
-    if (!Number.isFinite(n) || n < 0) return null;
-    return Math.round(n * 60);
-  }
+  <div id="history" style="display:none;"></div>
+  <div id="totals" style="display:none;"></div>
 
-  let currentUserId = null;
-  let items = [];
-  let sessions = [];
-  let running = null;
-  let historySelectedDate = null;
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script>
+    // =============================
+    // 1) SUPABASE CONFIG
+    // =============================
+    const supabaseUrl = "https://pkzwwhaqnpxmzqwzcitl.supabase.co";
+    const supabaseAnonKey = "sb_publishable_UPhipxgZU5lbyY3gAECheQ_xk1kdLjp";
+    const sb = supabase.createClient(supabaseUrl, supabaseAnonKey);
 
-  const authBox = document.getElementById("authBox");
-  const emailInput = document.getElementById("email");
-  const otpInput = document.getElementById("otp");
-  const sendCodeBtn = document.getElementById("sendCodeBtn");
-  const verifyBtn = document.getElementById("verifyBtn");
-  const signOutBtn = document.getElementById("signOutBtn");
+    // =============================
+    // 2) HELPERS
+    // =============================
+    const statusEl = document.getElementById("status");
+    const setStatus = (msg) => { statusEl.textContent = msg || ""; };
 
-  function showAuthBox(show) {
-    authBox.style.display = show ? "block" : "none";
-  }
+    const pad = (n) => String(n).padStart(2, "0");
+    const fmt = (secs) => {
+      secs = Math.max(0, Math.floor(secs || 0));
+      const h = Math.floor(secs / 3600);
+      const m = Math.floor((secs % 3600) / 60);
+      const s = secs % 60;
+      return `${pad(h)}:${pad(m)}:${pad(s)}`;
+    };
 
-  sendCodeBtn.onclick = async () => {
-    const email = emailInput.value.trim();
-    if (!email) return alert("Enter email");
+    // London local YYYY-MM-DD (important: avoids UTC "wrong day" issues)
+    const LONDON_TZ = "Europe/London";
+   const londonDateKey = (tsMs) => {
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone: LONDON_TZ,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(new Date(tsMs));
 
-    setStatus("Sending code...");
-    const { error } = await sb.auth.signInWithOtp({ email });
-    if (error) return alert(error.message);
-    setStatus("Code sent");
-  };
+  const get = (type) => parts.find(p => p.type === type).value;
+  return `${get("year")}-${get("month")}-${get("day")}`;
+};
 
-  verifyBtn.onclick = async () => {
-    const email = emailInput.value.trim();
-    const token = otpInput.value.trim();
-    if (!email || !token) return alert("Enter email + code");
+    const todayKey = () => londonDateKey(Date.now());
+    const dateKeyForTs = (tsMs) => londonDateKey(tsMs);
 
-    const { error } = await sb.auth.verifyOtp({
-      email,
-      token,
-      type: "email"
-    });
+    const parseDateKey = (d) => String(d);
 
-    if (error) return alert(error.message);
-
-    await bootstrap();
-  };
-
-  signOutBtn.onclick = async () => {
-    await sb.auth.signOut();
-    currentUserId = null;
-    items = [];
-    sessions = [];
-    running = null;
-    showAuthBox(true);
-    render();
-  };
-
-  async function loadFromCloud() {
-    console.log("loadFromCloud called");
-    console.log("currentUserId:", currentUserId);
-
-    if (!currentUserId) return;
-
-    setStatus("Loading...");
-
-    const { data: itemsData, error: itemsErr } = await sb
-      .from("practice_items")
-      .select("*")
-      .eq("user_id", currentUserId)
-      .order("created_at", { ascending: true });
-
-    if (itemsErr) {
-      console.error(itemsErr);
-      setStatus("Load error");
-      return;
+    function minutesToSeconds(mins) {
+      const n = Number(String(mins).replace(",", "."));
+      if (!Number.isFinite(n) || n < 0) return null;
+      return Math.round(n * 60);
     }
 
-    items = (itemsData || []).map(r => ({
-      id: r.id,
-      name: r.name,
-      archived: r.archived,
-      createdAt: new Date(r.created_at).getTime()
-    }));
+    // =============================
+    // 3) IN-MEMORY STATE
+    // =============================
+    let currentUserId = null;
 
-    const { data: sessionsData, error: sessionsErr } = await sb
-      .from("practice_sessions")
-      .select("*")
-      .eq("user_id", currentUserId);
+    let items = [];      // { id, name, archived, createdAt }
+    let sessions = [];   // { id, itemId, startTs, endTs, durationSec, dateKey }
+    let running = null;  // { itemId, startTs } or null
 
-    if (sessionsErr) {
-      console.error(sessionsErr);
-      setStatus("Load error");
-      return;
+    // History view selection
+    let historySelectedDate = null;
+
+    // =============================
+    // 4) AUTH UI + LOGIN FLOW
+    // =============================
+    const authBox = document.getElementById("authBox");
+    const emailInput = document.getElementById("email");
+    const otpInput = document.getElementById("otp");
+    const sendCodeBtn = document.getElementById("sendCodeBtn");
+    const verifyBtn = document.getElementById("verifyBtn");
+    const signOutBtn = document.getElementById("signOutBtn");
+
+    function showAuthBox(show) {
+      authBox.style.display = show ? "block" : "none";
     }
 
-    sessions = (sessionsData || []).map(r => ({
-      id: r.id,
-      itemId: r.item_id,
-      startTs: new Date(r.start_time).getTime(),
-      endTs: new Date(r.end_time).getTime(),
-      durationSec: r.duration_seconds,
-      dateKey: parseDateKey(r.date_key)
-    }));
+    sendCodeBtn.onclick = async () => {
+      try {
+        const email = emailInput.value.trim();
+        if (!email) return alert("Enter your email.");
+        setStatus("Sending code...");
+        const { error } = await sb.auth.signInWithOtp({ email });
+        if (error) return alert(error.message);
+        setStatus("Code sent. Check your email.");
+      } catch (e) {
+        alert(e?.message || String(e));
+      }
+    };
 
-    console.log("Loaded sessions:", sessions);
-    setStatus("");
-  }
+    verifyBtn.onclick = async () => {
+      try {
+        const email = emailInput.value.trim();
+        const token = otpInput.value.trim();
+        if (!email || !token) return alert("Enter email and code.");
+        setStatus("Verifying...");
+        const { error } = await sb.auth.verifyOtp({ email, token, type: "email" });
+        if (error) return alert(error.message);
+        setStatus("Logged in.");
+        await bootstrapAfterLogin();
+      } catch (e) {
+        alert(e?.message || String(e));
+      }
+    };
 
-  async function saveSessionToCloud(itemId, startTs, endTs, durationSec, dateKey) {
-    const { data, error } = await sb
-      .from("practice_sessions")
-      .insert({
-        user_id: currentUserId,
-        item_id: itemId,
-        start_time: new Date(startTs).toISOString(),
-        end_time: new Date(endTs).toISOString(),
-        duration_seconds: durationSec,
-        date_key: dateKey
-      })
-      .select()
-      .single();
-
-    if (error) {
-      console.error(error);
-      alert("Save failed");
-      return;
-    }
-
-    sessions.push({
-      id: data.id,
-      itemId: data.item_id,
-      startTs: new Date(data.start_time).getTime(),
-      endTs: new Date(data.end_time).getTime(),
-      durationSec: data.duration_seconds,
-      dateKey: parseDateKey(data.date_key)
-    });
-  }
-
-  async function addItemToCloud(name) {
-    const { data, error } = await sb
-      .from("practice_items")
-      .insert({ user_id: currentUserId, name, archived: false })
-      .select()
-      .single();
-
-    if (error) return console.error(error);
-
-    items.push({
-      id: data.id,
-      name: data.name,
-      archived: data.archived,
-      createdAt: new Date(data.created_at).getTime()
-    });
-  }
-
-  function render() {
-    const isHistory = location.hash === "#history";
-    const isTotals = location.hash === "#totals";
-    const isHome = !isHistory && !isTotals;
-
-    document.getElementById("items").style.display = isHome ? "block" : "none";
-    document.getElementById("todayTotal").style.display = isHome ? "block" : "none";
-
-    if (isHome) renderHome();
-  }
-
-  function renderHome() {
-    const wrap = document.getElementById("items");
-    wrap.innerHTML = "";
-
-    for (const it of items) {
-      const row = document.createElement("div");
-      row.textContent = it.name;
-      row.onclick = async () => {
-        const start = Date.now();
-        const end = Date.now();
-        await saveSessionToCloud(it.id, start, end, 60, todayKey());
-      };
-      wrap.appendChild(row);
-    }
-  }
-
-  // 🔥 FIXED BOOTSTRAP (MAIN FIX)
-  async function bootstrap() {
-    const { data: { session } } = await sb.auth.getSession();
-    currentUserId = session?.user?.id ?? null;
-
-    if (!currentUserId) {
+    signOutBtn.onclick = async () => {
+      await sb.auth.signOut();
+      currentUserId = null;
+      items = [];
+      sessions = [];
+      running = null;
+      historySelectedDate = null;
+      setStatus("Signed out.");
       showAuthBox(true);
       render();
-      return;
+    };
+
+    async function getSessionUserId() {
+      const { data: { session } } = await sb.auth.getSession();
+      return session?.user?.id || null;
     }
 
-    showAuthBox(false);
-    await loadFromCloud();
-    render();
+    // =============================
+    // 5) CLOUD LOAD/SAVE
+    // =============================
+    async function loadFromCloud() {
+      if (!currentUserId) return;
+      setStatus("Loading from cloud...");
+
+      const { data: itemsData, error: itemsErr } = await sb
+        .from("practice_items")
+        .select("*")
+        .order("created_at", { ascending: true });
+
+      if (itemsErr) throw itemsErr;
+
+      items = (itemsData || []).map(r => ({
+        id: r.id,
+        name: r.name,
+        archived: r.archived,
+        createdAt: new Date(r.created_at).getTime()
+      }));
+
+      const { data: sessionsData, error: sessionsErr } = await sb
+        .from("practice_sessions")
+        .select("*");
+
+      if (sessionsErr) throw sessionsErr;
+
+      sessions = (sessionsData || []).map(r => ({
+        id: r.id,
+        itemId: r.item_id,
+        startTs: new Date(r.start_time).getTime(),
+        endTs: new Date(r.end_time).getTime(),
+        durationSec: r.duration_seconds,
+        dateKey: parseDateKey(r.date_key)
+      }));
+
+      setStatus("");
+    }
+
+    async function addItemToCloud(name) {
+      const { data, error } = await sb
+        .from("practice_items")
+        .insert({ user_id: currentUserId, name, archived: false })
+        .select()
+        .single();
+
+      if (error) throw error;
+
+      items.push({
+        id: data.id,
+        name: data.name,
+        archived: data.archived,
+        createdAt: new Date(data.created_at).getTime()
+      });
+    }
+
+    async function saveSessionToCloud(itemId, startTs, endTs, durationSec, dateKey) {
+      const { data, error } = await sb
+        .from("practice_sessions")
+        .insert({
+          user_id: currentUserId,
+          item_id: itemId,
+          start_time: new Date(startTs).toISOString(),
+          end_time: new Date(endTs).toISOString(),
+          duration_seconds: durationSec,
+          date_key: dateKey
+        })
+        .select()
+        .single();
+
+      if (error) throw error;
+
+      sessions.push({
+        id: data.id,
+        itemId: data.item_id,
+        startTs: new Date(data.start_time).getTime(),
+        endTs: new Date(data.end_time).getTime(),
+        durationSec: data.duration_seconds,
+        dateKey: parseDateKey(data.date_key)
+      });
+    }
+
+    async function deleteSessionFromCloud(sessionId) {
+      if (!currentUserId) return alert("Please log in first.");
+
+      const { error } = await sb
+        .from("practice_sessions")
+        .delete()
+        .eq("id", sessionId)
+        .eq("user_id", currentUserId);
+
+      if (error) throw error;
+
+      sessions = sessions.filter(s => s.id !== sessionId);
+    }
+
+    async function updateSessionInCloud(sessionId, newDurationSec, newStartTs, newEndTs, newDateKey) {
+      const { data, error } = await sb
+        .from("practice_sessions")
+        .update({
+          duration_seconds: newDurationSec,
+          start_time: new Date(newStartTs).toISOString(),
+          end_time: new Date(newEndTs).toISOString(),
+          date_key: newDateKey
+        })
+        .eq("id", sessionId)
+        .eq("user_id", currentUserId)
+        .select()
+        .single();
+
+      if (error) throw error;
+
+      const idx = sessions.findIndex(s => s.id === sessionId);
+      if (idx >= 0) {
+        sessions[idx] = {
+          id: data.id,
+          itemId: data.item_id,
+          startTs: new Date(data.start_time).getTime(),
+          endTs: new Date(data.end_time).getTime(),
+          durationSec: data.duration_seconds,
+          dateKey: parseDateKey(data.date_key)
+        };
+      }
+    }
+
+    // =============================
+    // 6) TOTALS + EDIT/ADD HELPERS
+    // =============================
+    function totalsForDate(dateKey) {
+      const daySessions = sessions.filter(s => s.dateKey === dateKey);
+      const byItem = new Map();
+      let total = 0;
+
+      for (const s of daySessions) {
+        total += (s.durationSec || 0);
+        byItem.set(s.itemId, (byItem.get(s.itemId) || 0) + (s.durationSec || 0));
+      }
+
+      if (running && dateKey === todayKey()) {
+        const runningSecs = Math.floor((Date.now() - running.startTs) / 1000);
+        total += runningSecs;
+        byItem.set(running.itemId, (byItem.get(running.itemId) || 0) + runningSecs);
+      }
+
+      return { total, byItem };
+    }
+
+    function totalsForItemAllTime() {
+      const byItem = new Map();
+      const firstDate = new Map();
+
+      for (const s of sessions) {
+        const secs = s.durationSec || 0;
+        byItem.set(s.itemId, (byItem.get(s.itemId) || 0) + secs);
+
+        const existing = firstDate.get(s.itemId);
+        if (!existing || s.dateKey < existing) {
+          firstDate.set(s.itemId, s.dateKey);
+        }
+      }
+
+      if (running) {
+        const runningSecs = Math.floor((Date.now() - running.startTs) / 1000);
+        byItem.set(running.itemId, (byItem.get(running.itemId) || 0) + runningSecs);
+
+        const runningDate = dateKeyForTs(running.startTs);
+        const existing = firstDate.get(running.itemId);
+        if (!existing || runningDate < existing) {
+          firstDate.set(running.itemId, runningDate);
+        }
+      }
+
+      return { byItem, firstDate };
+    }
+
+    function daysBetweenDateKeysInclusive(startKey, endKey) {
+  const start = new Date(`${startKey}T00:00:00`);
+  const end = new Date(`${endKey}T00:00:00`);
+  const diffMs = end - start;
+  const diffDays = Math.floor(diffMs / 86400000);
+  return Math.max(1, diffDays + 1);
+}
+
+function fmtHoursPerDay(secsPerDay) {
+  const hours = secsPerDay / 3600;
+  return `${hours.toFixed(2)} h/day`;
+}
+
+    function latestSessionForItemOnDate(itemId, dKey) {
+      const list = sessions
+        .filter(s => s.itemId === itemId && s.dateKey === dKey)
+        .slice()
+        .sort((a, b) => b.endTs - a.endTs);
+      return list[0] || null;
+    }
+
+    async function addManualTime(itemId, minutes) {
+      if (!currentUserId) return alert("Please log in first.");
+
+      const durationSec = minutesToSeconds(minutes);
+      if (durationSec === null) return alert("Enter a valid number of minutes (e.g., 30).");
+
+      const endTs = Date.now();
+      const startTs = endTs - durationSec * 1000;
+      const dKey = dateKeyForTs(endTs);
+
+      try {
+        setStatus("Saving manual time...");
+        await saveSessionToCloud(itemId, startTs, endTs, durationSec, dKey);
+        setStatus("");
+        render();
+      } catch (e) {
+        setStatus("");
+        alert(e?.message || String(e));
+      }
+    }
+
+    async function editSessionDuration(sessionId, minutes) {
+      const durationSec = minutesToSeconds(minutes);
+      if (durationSec === null) return alert("Enter a valid number of minutes (e.g., 30).");
+
+      const s = sessions.find(x => x.id === sessionId);
+      if (!s) return alert("Session not found.");
+
+      const newEndTs = s.endTs;
+      const newStartTs = newEndTs - durationSec * 1000;
+      const newDateKey = dateKeyForTs(newEndTs);
+
+      try {
+        setStatus("Updating session...");
+        await updateSessionInCloud(sessionId, durationSec, newStartTs, newEndTs, newDateKey);
+        setStatus("");
+        render();
+      } catch (e) {
+        setStatus("");
+        alert(e?.message || String(e));
+      }
+    }
+
+    async function editFromItemRow(itemId) {
+      if (!currentUserId) return alert("Please log in first.");
+
+      const minsInput = document.getElementById("manualMinutes").value.trim();
+
+      if (running && running.itemId === itemId) {
+        const durationSec = minutesToSeconds(minsInput);
+        if (durationSec === null) return alert("Enter a valid number of minutes (e.g., 30).");
+
+        const endTs = Date.now();
+        const startTs = endTs - durationSec * 1000;
+        const dKey = dateKeyForTs(endTs);
+
+        running = null;
+        render();
+
+        try {
+          setStatus("Saving edited (forced-stop) session...");
+          await saveSessionToCloud(itemId, startTs, endTs, durationSec, dKey);
+          setStatus("");
+          render();
+        } catch (e) {
+          setStatus("");
+          alert(e?.message || String(e));
+        }
+        return;
+      }
+
+      const dKey = todayKey();
+      const latest = latestSessionForItemOnDate(itemId, dKey);
+      if (!latest) return alert("No session for this item today to edit.");
+
+      let mins = minsInput;
+      if (!mins) {
+        const currentMins = (latest.durationSec / 60).toFixed(2).replace(/\.00$/, "");
+        mins = prompt("Set session duration (minutes):", currentMins);
+        if (mins === null) return;
+        mins = mins.trim();
+      }
+
+      await editSessionDuration(latest.id, mins);
+    }
+
+    // =============================
+    // 7) TIMER TOGGLE
+    // =============================
+    async function toggleTimerForItem(itemId) {
+      if (!currentUserId) return alert("Please log in first.");
+
+      if (!running) {
+        running = { itemId, startTs: Date.now() };
+        render();
+        return;
+      }
+
+      if (running.itemId === itemId) {
+        const startTs = running.startTs;
+        const endTs = Date.now();
+        const durationSec = Math.max(0, Math.floor((endTs - startTs) / 1000));
+        const dKey = dateKeyForTs(endTs);
+
+        running = null;
+        render();
+
+        try {
+          setStatus("Saving session...");
+          await saveSessionToCloud(itemId, startTs, endTs, durationSec, dKey);
+          setStatus("");
+          render();
+        } catch (e) {
+          setStatus("");
+          alert(e?.message || String(e));
+        }
+        return;
+      }
+
+      const prev = running;
+      const prevStartTs = prev.startTs;
+      const prevEndTs = Date.now();
+      const prevDur = Math.max(0, Math.floor((prevEndTs - prevStartTs) / 1000));
+      const prevDateKey = dateKeyForTs(prevEndTs);
+
+      running = { itemId, startTs: Date.now() };
+      render();
+
+      try {
+        setStatus("Saving session...");
+        await saveSessionToCloud(prev.itemId, prevStartTs, prevEndTs, prevDur, prevDateKey);
+        setStatus("");
+        render();
+      } catch (e) {
+        setStatus("");
+        alert(e?.message || String(e));
+      }
+    }
+
+    // =============================
+    // 8) RENDERING
+    // =============================
+    function renderHome() {
+      const date = todayKey();
+      const { total, byItem } = totalsForDate(date);
+      document.getElementById("todayTotal").textContent = `Today: ${fmt(total)}`;
+
+      const wrap = document.getElementById("items");
+      wrap.innerHTML = "";
+
+      for (const it of items.filter(x => !x.archived)) {
+        const row = document.createElement("div");
+        row.className = "row";
+
+        const isRunning = running && running.itemId === it.id;
+        if (isRunning) row.classList.add("running");
+
+        const left = document.createElement("div");
+        left.className = "name";
+        left.textContent = it.name;
+        left.onclick = (ev) => {
+          ev.stopPropagation();
+          toggleTimerForItem(it.id);
+        };
+
+        const timeEl = document.createElement("div");
+        timeEl.className = "time";
+        timeEl.textContent = fmt(byItem.get(it.id) || 0);
+
+        const rightWrap = document.createElement("div");
+        rightWrap.className = "rightWrap";
+
+        const addTimeBtn = document.createElement("button");
+        addTimeBtn.type = "button";
+        addTimeBtn.textContent = "+ Add time";
+        addTimeBtn.onclick = async (ev) => {
+          ev.stopPropagation();
+          const mins = document.getElementById("manualMinutes").value.trim();
+          await addManualTime(it.id, mins);
+        };
+
+        const editBtn = document.createElement("button");
+        editBtn.type = "button";
+        editBtn.textContent = "Edit";
+        editBtn.onclick = async (ev) => {
+          ev.stopPropagation();
+          await editFromItemRow(it.id);
+        };
+
+        rightWrap.appendChild(timeEl);
+        rightWrap.appendChild(addTimeBtn);
+        rightWrap.appendChild(editBtn);
+
+        row.appendChild(left);
+        row.appendChild(rightWrap);
+        wrap.appendChild(row);
+      }
+    }
+
+    function renderHistory() {
+      const hist = document.getElementById("history");
+      hist.innerHTML = "<h2>History</h2>";
+
+      const dates = Array.from(new Set(sessions.map(s => s.dateKey))).sort().reverse();
+      if (dates.length === 0) {
+        hist.innerHTML += "<p>No sessions yet.</p>";
+        return;
+      }
+
+      if (!historySelectedDate) historySelectedDate = dates[0];
+
+      for (const d of dates) {
+        const { total } = totalsForDate(d);
+
+        const div = document.createElement("div");
+        div.className = "row";
+        if (d === historySelectedDate) div.classList.add("running");
+
+        const left = document.createElement("div");
+        left.className = "name";
+        left.textContent = d;
+
+        const right = document.createElement("div");
+        right.className = "time";
+        right.textContent = fmt(total);
+
+        div.appendChild(left);
+        div.appendChild(right);
+
+        div.onclick = () => {
+          historySelectedDate = d;
+          render();
+        };
+
+        hist.appendChild(div);
+      }
+
+      const h3 = document.createElement("h3");
+      h3.textContent = `Sessions for ${historySelectedDate}`;
+      h3.style.marginTop = "16px";
+      hist.appendChild(h3);
+
+      const daySessions = sessions
+        .filter(s => s.dateKey === historySelectedDate)
+        .slice()
+        .sort((a, b) => b.endTs - a.endTs);
+
+      if (daySessions.length === 0) {
+        const p = document.createElement("p");
+        p.textContent = "No sessions for this day.";
+        hist.appendChild(p);
+        return;
+      }
+
+      for (const s of daySessions) {
+        const it = items.find(x => x.id === s.itemId);
+        const itemName = it ? it.name : "(Unknown item)";
+
+        const row = document.createElement("div");
+        row.className = "row";
+
+        const left = document.createElement("div");
+        left.className = "name";
+        left.textContent = itemName;
+
+        const rightWrap = document.createElement("div");
+        rightWrap.className = "rightWrap";
+
+        const timeEl = document.createElement("div");
+        timeEl.className = "time";
+        timeEl.textContent = fmt(s.durationSec || 0);
+
+        const delBtn = document.createElement("button");
+        delBtn.type = "button";
+        delBtn.textContent = "Delete";
+        delBtn.onclick = async (ev) => {
+          ev.stopPropagation();
+          if (!confirm(`Delete this session?\n\n${itemName} — ${fmt(s.durationSec || 0)}`)) return;
+
+          try {
+            setStatus("Deleting session...");
+            await deleteSessionFromCloud(s.id);
+            setStatus("");
+            render();
+          } catch (e) {
+            setStatus("");
+            alert(e?.message || String(e));
+          }
+        };
+
+        rightWrap.appendChild(timeEl);
+        rightWrap.appendChild(delBtn);
+
+        row.appendChild(left);
+        row.appendChild(rightWrap);
+
+        hist.appendChild(row);
+      }
+    }
+
+function renderTotals() {
+  const totalsEl = document.getElementById("totals");
+  const { byItem, firstDate } = totalsForItemAllTime();
+  const today = todayKey();
+
+  const rows = items
+    .filter(x => !x.archived)
+    .map(it => {
+      const totalSec = byItem.get(it.id) || 0;
+      const startDate = firstDate.get(it.id) || null;
+      const days = startDate ? daysBetweenDateKeysInclusive(startDate, today) : 0;
+      const avgSecPerDay = days > 0 ? totalSec / days : 0;
+
+      return {
+        item: it,
+        totalSec,
+        firstDate: startDate,
+        days,
+        avgSecPerDay
+      };
+    })
+    .sort((a, b) => b.totalSec - a.totalSec);
+
+  const grandTotal = rows.reduce((sum, r) => sum + r.totalSec, 0);
+
+  totalsEl.innerHTML = `<h2>Totals</h2><div class="total">All time: ${fmt(grandTotal)}</div>`;
+
+  if (rows.length === 0) {
+    totalsEl.innerHTML += "<p>No items yet.</p>";
+    return;
   }
 
-  // 🔥 AUTH LISTENER FIX
-  sb.auth.onAuthStateChange((_event, session) => {
-    currentUserId = session?.user?.id ?? null;
+  for (const rowData of rows) {
+    const row = document.createElement("div");
+    row.className = "row";
 
-    if (currentUserId) {
-      loadFromCloud();
+    const leftWrap = document.createElement("div");
+    leftWrap.style.display = "flex";
+    leftWrap.style.flexDirection = "column";
+    leftWrap.style.gap = "4px";
+
+    const nameEl = document.createElement("div");
+    nameEl.className = "name";
+    nameEl.textContent = rowData.item.name;
+
+    const subEl = document.createElement("div");
+    subEl.className = "subtle";
+    subEl.textContent = rowData.firstDate
+      ? `Since ${rowData.firstDate} • Avg ${fmtHoursPerDay(rowData.avgSecPerDay)}`
+      : "No sessions yet";
+
+    const rightWrap = document.createElement("div");
+    rightWrap.style.display = "flex";
+    rightWrap.style.flexDirection = "column";
+    rightWrap.style.alignItems = "flex-end";
+    rightWrap.style.gap = "4px";
+
+    const totalEl = document.createElement("div");
+    totalEl.className = "time";
+    totalEl.textContent = fmt(rowData.totalSec);
+
+    const avgEl = document.createElement("div");
+    avgEl.className = "subtle";
+    avgEl.textContent = rowData.days > 0
+      ? `${rowData.days} day${rowData.days === 1 ? "" : "s"}`
+      : "";
+
+    rightWrap.appendChild(totalEl);
+    rightWrap.appendChild(avgEl);
+
+    leftWrap.appendChild(nameEl);
+    leftWrap.appendChild(subEl);
+
+    row.appendChild(leftWrap);
+    row.appendChild(rightWrap);
+    totalsEl.appendChild(row);
+  }
+}
+
+    function render() {
+      const isHistory = location.hash === "#history";
+      const isTotals = location.hash === "#totals";
+      const isHome = !isHistory && !isTotals;
+
+      document.getElementById("history").style.display = isHistory ? "block" : "none";
+      document.getElementById("totals").style.display = isTotals ? "block" : "none";
+      document.getElementById("items").style.display = isHome ? "block" : "none";
+      document.getElementById("todayTotal").style.display = isHome ? "block" : "none";
+      document.querySelector(".controls").style.display = isHome ? "flex" : "none";
+
+      if (isHistory) renderHistory();
+      else if (isTotals) renderTotals();
+      else renderHome();
+    }
+
+    // =============================
+    // 9) UI EVENTS
+    // =============================
+    document.getElementById("addBtn").onclick = async () => {
+      try {
+        if (!currentUserId) return alert("Please log in first.");
+        const input = document.getElementById("newItemName");
+        const name = input.value.trim();
+        if (!name) return;
+
+        setStatus("Saving item...");
+        await addItemToCloud(name);
+        setStatus("");
+
+        input.value = "";
+        render();
+      } catch (e) {
+        setStatus("");
+        alert(e?.message || String(e));
+      }
+    };
+
+    document.getElementById("manualMinutes").addEventListener("keydown", async (e) => {
+      if (e.key !== "Enter") return;
+      if (!running) return;
+      const mins = e.target.value.trim();
+      await addManualTime(running.itemId, mins);
+    });
+
+    // =============================
+    // 10) STARTUP / BOOTSTRAP
+    // =============================
+    window.addEventListener("hashchange", render);
+
+    setInterval(() => {
+      if (running) render();
+    }, 1000);
+
+    async function bootstrapAfterLogin() {
+      currentUserId = await getSessionUserId();
+      if (!currentUserId) {
+        showAuthBox(true);
+        return;
+      }
+      showAuthBox(false);
+      await loadFromCloud();
       render();
     }
-  });
 
-  window.addEventListener("hashchange", render);
-
-  bootstrap();
-</script>
+    (async () => {
+      currentUserId = await getSessionUserId();
+      if (!currentUserId) {
+        showAuthBox(true);
+        setStatus("Please log in.");
+        render();
+        return;
+      }
+      showAuthBox(false);
+      await loadFromCloud();
+      render();
+    })();
+  </script>
+</body>
+</html>
