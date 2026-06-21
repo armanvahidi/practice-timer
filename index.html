@@ -110,8 +110,8 @@
 
     const todayKey = () => londonDateKey(Date.now());
     const dateKeyForTs = (tsMs) => londonDateKey(tsMs);
-
-    const parseDateKey = (d) => String(d);
+    
+    const parseDateKey = (d) => String(d).slice(0, 10);
 
     function minutesToSeconds(mins) {
       const n = Number(String(mins).replace(",", "."));
@@ -225,6 +225,9 @@
         durationSec: r.duration_seconds,
         dateKey: parseDateKey(r.date_key)
       }));
+
+      console.log("Loaded sessions:", sessions);
+      console.log("Today key:", todayKey());
 
       setStatus("");
     }
