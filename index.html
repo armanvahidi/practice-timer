@@ -96,15 +96,17 @@
 
     // London local YYYY-MM-DD (important: avoids UTC "wrong day" issues)
     const LONDON_TZ = "Europe/London";
-    const londonDateKey = (tsMs) => {
-      const dtf = new Intl.DateTimeFormat("en-CA", {
-        timeZone: LONDON_TZ,
-        year: "numeric",
-        month: "2-digit",
-        day: "2-digit",
-      });
-      return dtf.format(new Date(tsMs)); // en-CA -> YYYY-MM-DD
-    };
+   const londonDateKey = (tsMs) => {
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone: LONDON_TZ,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(new Date(tsMs));
+
+  const get = (type) => parts.find(p => p.type === type).value;
+  return `${get("year")}-${get("month")}-${get("day")}`;
+};
 
     const todayKey = () => londonDateKey(Date.now());
     const dateKeyForTs = (tsMs) => londonDateKey(tsMs);
