@@ -199,7 +199,7 @@
 
       const { data: itemsData, error: itemsErr } = await sb
         .from("practice_items")
-        .select("*")
+        .range(0, 5000)
         .order("created_at", { ascending: true });
 
       if (itemsErr) throw itemsErr;
@@ -213,7 +213,7 @@
 
       const { data: sessionsData, error: sessionsErr } = await sb
         .from("practice_sessions")
-        .select("*");
+       .range(0, 5000)
 
       if (sessionsErr) throw sessionsErr;
 
