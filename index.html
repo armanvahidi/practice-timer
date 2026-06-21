@@ -194,6 +194,15 @@
     // 5) CLOUD LOAD/SAVE
     // =============================
     async function loadFromCloud() {
+  console.log("loadFromCloud called");
+  console.log("currentUserId:", currentUserId);
+
+  const { data: testData, error: testErr } = await sb
+    .from("practice_sessions")
+    .select("*")
+    .limit(5);
+
+  console.log("Supabase test sessions:", { testData, testErr });
       if (!currentUserId) return;
       setStatus("Loading from cloud...");
 
